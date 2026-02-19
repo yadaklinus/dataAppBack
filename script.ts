@@ -1,6 +1,7 @@
 import 'module-alias/register';
 import express, { Request, Response, Application } from 'express';
 import dotenv from 'dotenv';
+import { startTransactionSync } from '@/jobs/transactionSync';
 
 // Import your routers (ensure these files are also converted to .ts)
 import authRouterV1 from '@/routes/authRoutes';
@@ -20,11 +21,14 @@ app.get("/", (req: Request, res: Response) => {
     res.json("work");
 });
 
+
 // Routes
 app.use("/api/v1/auth", authRouterV1);
 app.use("/api/v1/user", userRouterV1);
 app.use("/api/v1/vtu", vtuRouterV1);
 app.use("/api/v1/flw", flwRouterV1);
+
+//startTransactionSync();
 
 app.listen(PORT, () => {
     console.log(`Running on port ${PORT}`);

@@ -1,5 +1,6 @@
 const prisma = require('@/lib/prisma');
 const dataProvider = require('@/services/dataProvider');
+const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 /**
@@ -19,7 +20,7 @@ const getAvailablePlans = async (req, res) => {
 
 /**
  * Handle Data Bundle Purchase
- * Integrated with Decoupled Wallet Table
+ * Added: Phone number prefix validation to prevent cross-network errors.
  */
 const purchaseData = async (req, res) => {
     const { network, planId, phoneNumber } = req.body;
@@ -29,27 +30,55 @@ const purchaseData = async (req, res) => {
         return res.status(400).json({ status: "ERROR", message: "Network, Plan ID, and Phone Number are required" });
     }
 
+    // --- BUILDER ADDITION: PREFIX VALIDATION ---
+    const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
+    if (!isNetworkMatch) {
+        return res.status(400).json({ 
+            status: "ERROR", 
+            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.` 
+        });
+    }
+
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+
     try {
-        // 1. SECURITY CHECK: Re-verify the price from the provider
         const allPlans = await dataProvider.fetchAvailablePlans();
         let selectedPlan = null;
 
-        for (const net in allPlans.MOBILE_NETWORK) {
-            allPlans.MOBILE_NETWORK[net].forEach(group => {
-                const found = group.PRODUCT.find(p => String(p.PRODUCT_CODE) === String(planId));
-                if (found) selectedPlan = found;
-            });
+        const inputNet = network.toUpperCase();
+        let networkKey;
+
+        if (inputNet === "MTN") {
+            networkKey = "MTN";
+        } else if (inputNet === "9MOBILE") {
+            networkKey = "m_9mobile";
+        } else {
+            networkKey = inputNet.charAt(0) + inputNet.slice(1).toLowerCase();
+        }
+
+        const networkGroups = allPlans.MOBILE_NETWORK?.[networkKey] || [];
+
+        for (const group of networkGroups) {
+            const found = group.PRODUCT.find(p => 
+                String(p.PRODUCT_CODE) === String(planId) || 
+                String(p.PRODUCT_ID) === String(planId)
+            );
+            if (found) {
+                selectedPlan = found;
+                break;
+            }
         }
 
         if (!selectedPlan) {
-            return res.status(404).json({ status: "ERROR", message: "Invalid data plan selected" });
+            return res.status(404).json({ 
+                status: "ERROR", 
+                message: "Invalid data plan selected"
+            });
         }
 
         const sellingPrice = selectedPlan.SELLING_PRICE;
 
-        // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
-            // A. Check Wallet Balance specifically from the Wallet table
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             
             if (!wallet || Number(wallet.balance) < sellingPrice) {
@@ -58,7 +87,6 @@ const purchaseData = async (req, res) => {
 
             const requestId = `DAT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
             
-            // B. Create Pending Transaction
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -68,32 +96,32 @@ const purchaseData = async (req, res) => {
                     reference: requestId,
                     metadata: {
                         network,
-                        recipient: phoneNumber,
+                        recipient: cleanPhone,
                         planName: selectedPlan.PRODUCT_NAME,
                         planId: planId
                     }
                 }
             });
 
-            // C. Deduct money from the Wallet table
             await tx.wallet.update({
                 where: { userId },
-                data: { balance: { decrement: sellingPrice } }
+                data: { 
+                    balance: { decrement: sellingPrice },
+                    totalSpent: { increment: sellingPrice }
+                }
             });
 
             return { transaction, requestId };
         });
 
-        // 3. Call External Provider API
         try {
             const providerResponse = await dataProvider.buyData(
                 network,
                 planId,
-                phoneNumber,
+                cleanPhone,
                 result.requestId
             );
 
-            // 4. Update Transaction on Success
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
@@ -104,12 +132,11 @@ const purchaseData = async (req, res) => {
 
             return res.status(200).json({
                 status: "OK",
-                message: `Successfully sent ${selectedPlan.PRODUCT_NAME} to ${phoneNumber}`,
+                message: `Successfully sent ${selectedPlan.PRODUCT_NAME} to ${cleanPhone}`,
                 transactionId: result.requestId
             });
 
         } catch (apiError) {
-            // 5. AUTO-REFUND: Update Wallet Table on Failure
             await prisma.$transaction([
                 prisma.transaction.update({
                     where: { id: result.transaction.id },
@@ -117,7 +144,10 @@ const purchaseData = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { balance: { increment: sellingPrice } }
+                    data: { 
+                        balance: { increment: sellingPrice },
+                        totalSpent: { decrement: sellingPrice }
+                    }
                 })
             ]);
 
@@ -128,7 +158,6 @@ const purchaseData = async (req, res) => {
         }
 
     } catch (error) {
-        console.error("Data Purchase Error:", error.message);
         return res.status(error.message === "Insufficient wallet balance" ? 402 : 500).json({
             status: "ERROR",
             message: error.message || "Internal server error"
@@ -136,9 +165,6 @@ const purchaseData = async (req, res) => {
     }
 };
 
-/**
- * Get Data Transaction Status & Sync with Provider
- */
 const getDataStatus = async (req, res) => {
     const { reference } = req.params;
     try {
@@ -149,12 +175,10 @@ const getDataStatus = async (req, res) => {
         
         if (!txn) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
 
-        // ACTIVE SYNC: If still pending, ask the provider for the truth
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {
                 const providerStatus = await dataProvider.queryTransaction(txn.providerReference);
                 
-                // Nellobyte statuscode "200" = ORDER_COMPLETED
                 if (providerStatus.statuscode === "200") {
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
@@ -162,7 +186,6 @@ const getDataStatus = async (req, res) => {
                         include: { user: { select: { fullName: true, email: true } } }
                     });
                 } 
-                // Handle cancellation or failure by refunding the Wallet
                 else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(providerStatus.status)) {
                     const updatedData = await prisma.$transaction([
                         prisma.transaction.update({
@@ -171,7 +194,10 @@ const getDataStatus = async (req, res) => {
                         }),
                         prisma.wallet.update({
                             where: { userId: txn.userId },
-                            data: { balance: { increment: txn.amount } }
+                            data: { 
+                                balance: { increment: txn.amount },
+                                totalSpent: { decrement: txn.amount }
+                            }
                         })
                     ]);
                     txn = { ...updatedData[0], user: txn.user };

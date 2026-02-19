@@ -1,19 +1,30 @@
 const prisma = require('@/lib/prisma');
 const airtimeProvider = require('@/services/airtimeProvider');
+const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 /**
  * Handles Airtime Purchase Logic
- * Integrated with Decoupled Wallet Table
+ * Updates wallet balance and increments totalSpent for accountability.
  */
 const purchaseAirtime = async (req, res) => {
     const { network, amount, phoneNumber } = req.body;
     const userId = req.user.id; 
 
-    // 1. Validation
     if (!network || !amount || !phoneNumber) {
         return res.status(400).json({ status: "ERROR", message: "Missing required fields" });
     }
+
+     // --- BUILDER ADDITION: PREFIX VALIDATION ---
+    const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
+    if (!isNetworkMatch) {
+        return res.status(400).json({ 
+            status: "ERROR", 
+            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.` 
+        });
+    }
+
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
 
     const airtimeAmount = Number(amount);
     if (airtimeAmount < 50) {
@@ -23,16 +34,14 @@ const purchaseAirtime = async (req, res) => {
     try {
         const sellingPrice = airtimeAmount;
 
-        // 2. Database Atomic Operation
+        // 1. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
-            // A. Check Wallet Balance specifically from the Wallet table
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             
             if (!wallet || Number(wallet.balance) < sellingPrice) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            // B. Create Pending Transaction
             const requestId = `AIR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
             const transaction = await tx.transaction.create({
                 data: {
@@ -43,17 +52,20 @@ const purchaseAirtime = async (req, res) => {
                     reference: requestId,
                     metadata: {
                         network,
-                        recipient: phoneNumber,
+                        recipient: cleanPhone,
                         faceValue: airtimeAmount,
                         profit: 0
                     }
                 }
             });
 
-            // C. Deduct money from the Wallet table
+            // 2. Update Wallet: Deduct Balance AND Increment TotalSpent
             await tx.wallet.update({
                 where: { userId },
-                data: { balance: { decrement: sellingPrice } }
+                data: { 
+                    balance: { decrement: sellingPrice },
+                    totalSpent: { increment: sellingPrice } // Increment accountability field
+                }
             });
 
             return { transaction, requestId };
@@ -64,11 +76,10 @@ const purchaseAirtime = async (req, res) => {
             const providerResponse = await airtimeProvider.buyAirtime(
                 network,
                 airtimeAmount,
-                phoneNumber,
+                cleanPhone,
                 result.requestId
             );
 
-            // 4. Update Transaction Status
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
@@ -84,7 +95,7 @@ const purchaseAirtime = async (req, res) => {
             });
 
         } catch (apiError) {
-            // 5. AUTO-REFUND: Update Wallet Table on Failure
+            // 4. AUTO-REFUND: Revert both balance and totalSpent on failure
             await prisma.$transaction([
                 prisma.transaction.update({
                     where: { id: result.transaction.id },
@@ -92,7 +103,10 @@ const purchaseAirtime = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { balance: { increment: sellingPrice } }
+                    data: { 
+                        balance: { increment: sellingPrice },
+                        totalSpent: { decrement: sellingPrice } // Revert accountability field
+                    }
                 })
             ]);
 
@@ -112,7 +126,7 @@ const purchaseAirtime = async (req, res) => {
 };
 
 /**
- * Check status & Active Sync with Wallet Table
+ * Check status & Active Sync
  */
 const getAirtimeStatus = async (req, res) => {
     const { reference } = req.params;
@@ -124,7 +138,6 @@ const getAirtimeStatus = async (req, res) => {
         
         if (!txn) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
 
-        // ACTIVE SYNC
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {
                 const providerStatus = await airtimeProvider.queryTransaction(txn.providerReference);
@@ -137,7 +150,6 @@ const getAirtimeStatus = async (req, res) => {
                     });
                 } 
                 else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(providerStatus.status)) {
-                    // Sync failure and refund back to Wallet table
                     const updatedData = await prisma.$transaction([
                         prisma.transaction.update({
                             where: { id: txn.id },
@@ -145,7 +157,10 @@ const getAirtimeStatus = async (req, res) => {
                         }),
                         prisma.wallet.update({
                             where: { userId: txn.userId },
-                            data: { balance: { increment: txn.amount } }
+                            data: { 
+                                balance: { increment: txn.amount },
+                                totalSpent: { decrement: txn.amount } // Revert on sync failure
+                            }
                         })
                     ]);
                     txn = { ...updatedData[0], user: txn.user };

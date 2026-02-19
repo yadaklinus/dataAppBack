@@ -70,29 +70,52 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
         const networkCode = NETWORK_CODES[network.toUpperCase()];
         if (!networkCode) throw new Error("Invalid network selection");
 
-        const response = await axios.get(`${BASE_URL}/APIDatabundleV1.asp`, {
-            params: {
-                UserID: USER_ID,
-                APIKey: API_KEY,
-                MobileNetwork: networkCode,
-                DataPlan: dataPlanId,
-                MobileNumber: phoneNumber,
-                RequestID: requestId,
-                CallBackURL: process.env.CALLBACK_URL
+        // 1. Build Query Params
+        const queryParams = new URLSearchParams({
+            UserID: USER_ID,
+            APIKey: API_KEY,
+            MobileNetwork: networkCode,
+            DataPlan: String(dataPlanId).trim(), // Force string and trim
+            MobileNumber: phoneNumber,
+            RequestID: requestId,
+            CallBackURL: process.env.CALLBACK_URL || ''
+        });
+
+        const url = `${BASE_URL}/APIDatabundleV1.asp?${queryParams.toString()}`;
+        
+        // DEBUG: Copy this URL from your console and paste it into a browser to see if it works
+        console.log(`[Data Provider] Full Request URL: ${url}`);
+
+        // 2. Execute Fetch with User-Agent
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                // Some providers return "Invalid Plan" if they detect a bot without a User-Agent
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
         });
 
-        if (response.data.statuscode === "100" || response.data.status === "ORDER_RECEIVED") {
+        if (!response.ok) {
+            throw new Error(`HTTP Error: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 3. Handle Provider Response
+        if (data.statuscode === "100" || data.status === "ORDER_RECEIVED") {
             return {
                 success: true,
-                orderId: response.data.orderid,
-                status: response.data.status
+                orderId: data.orderid,
+                status: data.status
             };
         }
 
-        throw new Error(response.data.status || "Data request failed at provider");
+        // Logic Check: If the provider returns an error, throw the exact message
+        const errorMessage = data.status || data.response_description || "Invalid data plan or request failed";
+        throw new Error(errorMessage);
+
     } catch (error) {
-        console.error("Nellobyte Data Error:", error.response?.data || error.message);
+        console.error("Nellobyte Data Error:", error.message);
         throw new Error(error.message || "External Provider Error");
     }
 };

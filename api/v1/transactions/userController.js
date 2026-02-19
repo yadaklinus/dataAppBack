@@ -16,11 +16,11 @@ const getProfile = async (req, res) => {
                 tier: true,
                 isKycVerified: true,
                 createdAt: true,
-                // Fetch balance from the decoupled Wallet table
                 wallet: {
                     select: {
                         balance: true,
-                        bonusBalance: true
+                        bonusBalance: true,
+                        totalSpent: true
                     }
                 }
             }
@@ -28,12 +28,12 @@ const getProfile = async (req, res) => {
 
         if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
 
-        // Flatten the response for the frontend
         const responseData = {
             ...user,
             walletBalance: user.wallet?.balance || 0,
             bonusBalance: user.wallet?.bonusBalance || 0,
-            wallet: undefined // Remove the nested wallet object for a cleaner API
+            totalSpent: user.wallet?.totalSpent || 0,
+            wallet: undefined 
         };
 
         return res.status(200).json({ status: "OK", data: responseData });
@@ -83,7 +83,8 @@ const getTransactions = async (req, res) => {
 
 /**
  * Dashboard Overview
- * Aggregates user info, wallet balance, and recent activity in one call
+ * Aggregates user info, wallet balance, and recent activity
+ * Fixed: Today Spent now excludes WALLET_FUNDING types
  */
 const getDashboard = async (req, res) => {
     try {
@@ -96,7 +97,7 @@ const getDashboard = async (req, res) => {
                 select: { 
                     fullName: true, 
                     tier: true,
-                    wallet: { select: { balance: true } }
+                    wallet: { select: { balance: true, totalSpent: true } }
                 }
             }),
             // 2. Last 5 Transactions
@@ -106,10 +107,12 @@ const getDashboard = async (req, res) => {
                 take: 5
             }),
             // 3. Stats (Spent Today)
+            // Fix: Exclude WALLET_FUNDING from "spent" calculation
             prisma.transaction.aggregate({
                 where: {
                     userId,
                     status: 'SUCCESS',
+                    type: { not: 'WALLET_FUNDING' }, // Only count actual purchases
                     createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) }
                 },
                 _sum: { amount: true }
@@ -122,13 +125,15 @@ const getDashboard = async (req, res) => {
                 user: {
                     fullName: userWithWallet.fullName,
                     tier: userWithWallet.tier,
-                    walletBalance: userWithWallet.wallet?.balance || 0
+                    walletBalance: userWithWallet.wallet?.balance || 0,
+                    lifetimeSpent: userWithWallet.wallet?.totalSpent || 0
                 },
                 recentTransactions,
                 todaySpent: stats._sum.amount || 0
             }
         });
     } catch (error) {
+        console.error("Dashboard Error:", error);
         return res.status(500).json({ status: "ERROR", message: "Dashboard error" });
     }
 };
@@ -182,7 +187,6 @@ const getUserPins = async (req, res) => {
 
 /**
  * GET /transactions/:reference/pins
- * Gets specific pins and quantity details for a particular order
  */
 const getTransactionPins = async (req, res) => {
     const { reference } = req.params;

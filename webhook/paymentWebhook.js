@@ -3,113 +3,157 @@ const paymentProvider = require('@/services/paymentProvider');
 const { TransactionStatus } = require('@prisma/client');
 
 /**
+ * Logic: Reverse-calculate the principal to credit the wallet
+ * based on the ₦40 / 2% / ₦2000 fee structure.
+ */
+const getWalletCreditAmount = (totalReceived) => {
+    const total = Number(totalReceived);
+    
+    // Safety check for very small amounts to avoid negative balances
+    if (total <= 40) return 0;
+
+    if (total <= 2540) {
+        // Tier 1: Small amounts (Principal <= ₦2,500)
+        // Fee is flat ₦40.
+        return total - 40;
+    } else if (total > 102000) { 
+        // Tier 3: Large amounts (Principal > ₦100,000)
+        // Fee is capped at ₦2,000.
+        return total - 2000;
+    } else {
+        // Tier 2: Mid-range (2% Fee)
+        // Principal = Total * 0.98
+        return Math.floor(total * 0.98);
+    }
+};
+
+/**
  * Flutterwave Webhook Handler
- * Handles: charge.completed
  */
 const handleFlutterwaveWebhook = async (req, res) => {
-    // 1. SECURITY: Verify Secret Hash
     const secretHash = process.env.FLW_WEBHOOK_HASH;
     const signature = req.headers['verif-hash'];
 
     if (!signature || signature !== secretHash) {
-        // Discard request if signature is missing or wrong
         return res.status(401).end();
     }
 
     const payload = req.body;
+    res.status(200).end(); // Always acknowledge 200 to FLW first
 
-    // 2. ACKNOWLEDGE RECEIPT IMMEDIATELY
-    // Flutterwave times out after 60s. We respond 200 now and process logic after.
-    res.status(200).end();
-
-    // 3. VALIDATE EVENT TYPE
-    if (payload.event !== 'charge.completed') return;
+    if (payload.event !== 'charge.completed' && payload.status !== 'successful') return;
 
     try {
-        const { id, amount, currency, tx_ref, flw_ref, status } = payload.data;
+        const data = payload.data || payload;
+        const flwId = data.id;
+        const reference = data.tx_ref || data.txRef; 
+        const orderRef = data.order_ref || data.orderRef;
 
-        // 4. BEST PRACTICE: Re-verify transaction with Flutterwave API
-        // This prevents "Man-in-the-Middle" attacks where someone fakes a payload.
-        const verifiedData = await paymentProvider.verifyTransaction(id);
-
-        if (
-            verifiedData.status !== "successful" ||
-            verifiedData.amount < amount || // Ensure amount wasn't tampered
-            verifiedData.currency !== "NGN"
-        ) {
-            console.error(`Verification failed for Tx ID: ${id}`);
+        // 1. Re-verify with Flutterwave API (Security)
+        const verifiedData = await paymentProvider.verifyTransaction(flwId);
+        if (verifiedData.status !== "successful") {
+            console.error(`[Webhook] Verification failed: Status is ${verifiedData.status}`);
             return;
         }
 
-        // 5. IDENTIFY THE USER
-        let userId;
-        let internalReference = tx_ref;
+        const totalPaidByCustomer = Number(verifiedData.amount);
 
-        if (tx_ref && tx_ref.startsWith('FUND-')) {
-            // Case A: Gateway Payment (Link/Card)
-            userId = tx_ref.split('-')[2];
-        } else {
-            // Case B: Virtual Account Transfer
-            // FLW sends the account's order_ref in the payload
-            const orderRef = payload.data.order_ref;
+        // 2. Identify User & Determine Wallet Credit
+        let userId;
+        let internalReference = reference;
+        let walletCreditAmount = 0;
+
+        // CASE A: Standard Gateway (Card/USSD)
+        if (reference && reference.startsWith('FUND-')) {
+            const parts = reference.split('-');
+            userId = parts.slice(2).join('-'); // Extract UUID
+            
+            const existingTx = await prisma.transaction.findUnique({
+                where: { reference }
+            });
+
+            if (existingTx) {
+                walletCreditAmount = Number(existingTx.amount);
+            } else {
+                walletCreditAmount = getWalletCreditAmount(totalPaidByCustomer);
+            }
+        } 
+        // CASE B: Dedicated Virtual Account Transfer
+        // The reference starts with VA-REG (as set during account creation)
+        else if (reference && reference.startsWith('VA-REG-')) {
+            const parts = reference.split('-');
+            // Format: VA-REG-TIMESTAMP-UUID
+            // 0: VA, 1: REG, 2: TIMESTAMP, 3+: UUID
+            userId = parts.slice(3).join('-'); 
+            internalReference = `VA-IN-${flwId}`;
+            walletCreditAmount = getWalletCreditAmount(totalPaidByCustomer);
+        }
+        // CASE C: Fallback for orderRef (if provided by FLW instead of tx_ref)
+        else if (orderRef) {
             const kycRecord = await prisma.kycData.findUnique({
                 where: { accountReference: orderRef }
             });
             userId = kycRecord?.userId;
-            internalReference = `VA-IN-${id}`; // Create a reference for VA funding
+            internalReference = `VA-IN-${flwId}`;
+            walletCreditAmount = getWalletCreditAmount(totalPaidByCustomer);
         }
 
-        if (!userId) {
-            console.error(`User not found for payment ID: ${id}`);
+        if (!userId || walletCreditAmount <= 0) {
+            console.error(`[Webhook] FAILED association: ID ${flwId} | Ref ${reference} | OrderRef ${orderRef}`);
             return;
         }
 
-        // 6. IDEMPOTENCY: Atomic Update & Duplicate Check
-        // We use a database transaction to ensure logic is safe.
+        // 3. Atomic Database Update
         await prisma.$transaction(async (tx) => {
-            // Check if this Flutterwave ID has already been processed
             const alreadyProcessed = await tx.transaction.findUnique({
-                where: { providerReference: String(id) }
+                where: { providerReference: String(flwId) }
             });
 
             if (alreadyProcessed && alreadyProcessed.status === TransactionStatus.SUCCESS) {
-                return; // Exit if already funded
+                return;
             }
 
-            // Update or Create the Transaction Record
+            const platformFee = Math.max(0, totalPaidByCustomer - walletCreditAmount);
+
             await tx.transaction.upsert({
                 where: { reference: internalReference },
                 update: {
                     status: TransactionStatus.SUCCESS,
-                    providerReference: String(id),
+                    providerReference: String(flwId),
+                    fee: platformFee
                 },
                 create: {
                     userId,
-                    amount: verifiedData.amount,
+                    amount: walletCreditAmount,
+                    fee: platformFee,
                     type: 'WALLET_FUNDING',
                     status: TransactionStatus.SUCCESS,
                     reference: internalReference,
-                    providerReference: String(id),
+                    providerReference: String(flwId),
                     metadata: { 
-                        method: payload.data.payment_type,
-                        flw_ref: flw_ref 
+                        totalCharged: totalPaidByCustomer,
+                        method: data.payment_type || 'transfer',
+                        originalRef: reference
                     }
                 }
             });
 
-            // Increment the user's wallet
-            await tx.wallet.update({
+            await tx.wallet.upsert({
                 where: { userId },
-                data: {
-                    balance: { increment: verifiedData.amount }
+                update: {
+                    balance: { increment: walletCreditAmount }
+                },
+                create: {
+                    userId: userId,
+                    balance: walletCreditAmount
                 }
             });
 
-            console.log(`Successfully funded User ${userId} with ₦${verifiedData.amount}`);
+            console.log(`[Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
         });
 
     } catch (error) {
-        console.error("CRITICAL: Webhook Processing Failed", error.message);
+        console.error("[Webhook] Logic Error:", error.message);
     }
 };
 
