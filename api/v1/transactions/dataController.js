@@ -2,7 +2,13 @@ const prisma = require('@/lib/prisma');
 const dataProvider = require('@/services/dataProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
+const { z } = require('zod');
 
+const purchaseDataSchema = z.object({
+        network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
+        planId:  z.string().min(1).max(20),
+        phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
+});
 /**
  * Fetch available plans (Selling Price only)
  */
@@ -23,7 +29,14 @@ const getAvailablePlans = async (req, res) => {
  * Added: Phone number prefix validation to prevent cross-network errors.
  */
 const purchaseData = async (req, res) => {
-    const { network, planId, phoneNumber } = req.body;
+    
+    const parsed = purchaseDataSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ status:"ERROR", message: parsed.error.errors[0].message });
+    }
+
+
+    const { network, planId, phoneNumber } = parsed.data;
     const userId = req.user.id;
 
     if (!network || !planId || !phoneNumber) {

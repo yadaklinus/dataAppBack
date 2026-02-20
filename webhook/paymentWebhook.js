@@ -1,11 +1,21 @@
 const prisma = require('@/lib/prisma');
 const paymentProvider = require('@/services/paymentProvider');
 const { TransactionStatus } = require('@prisma/client');
-
+const crypto = require('crypto');
 /**
  * Logic: Reverse-calculate the principal to credit the wallet
  * based on the ₦40 / 2% / ₦2000 fee structure.
  */
+
+function safeCompare(a, b) {
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false; // different lengths
+  }
+}
+
+
 const getWalletCreditAmount = (totalReceived) => {
     const total = Number(totalReceived);
     
@@ -34,9 +44,11 @@ const handleFlutterwaveWebhook = async (req, res) => {
     const secretHash = process.env.FLW_WEBHOOK_HASH;
     const signature = req.headers['verif-hash'];
 
-    if (!signature || signature !== secretHash) {
+    if (!signature || !safeCompare(signature, secretHash)) {
+        console.warn('[Webhook] Invalid hash from IP:', req.ip);
         return res.status(401).end();
     }
+
 
     const payload = req.body;
     res.status(200).end(); // Always acknowledge 200 to FLW first

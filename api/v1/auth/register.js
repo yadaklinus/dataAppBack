@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const prisma = require('@/lib/prisma');
 const SALT_ROUNDS = 12;
+const validator = require('validator');
 
 /**
  * Handles User Registration
@@ -18,6 +19,19 @@ const register = async (req, res) => {
                 message: "Email, password, and phone number are required" 
             });
         }
+
+        if (!password || password.length < 8) {
+            return res.status(400).json({
+                status: "ERROR",
+                message: "Password must be at least 8 characters long"
+            });
+        }
+
+        if (!validator.isEmail(email)) {
+            return res.status(400).json({ status:"ERROR", message:"Invalid email format" });
+        }
+
+
 
         // 2. Uniqueness Check (Email and Phone)
         const existingUser = await prisma.user.findFirst({

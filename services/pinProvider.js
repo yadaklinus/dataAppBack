@@ -50,7 +50,8 @@ const buyEpin = async (network, value, quantity, requestId) => {
                 Quantity: quantity,
                 RequestID: requestId,
                 CallBackURL: process.env.CALLBACK_URL
-            }
+            },
+            timeout: 15000,  
         });
 
         // Nellobyte returns an array TXN_EPIN on success
@@ -82,7 +83,8 @@ const queryEpinStatus = async (requestId) => {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 RequestID: requestId
-            }
+            },
+            timeout: 15000,  
         });
         return response.data;
     } catch (error) {

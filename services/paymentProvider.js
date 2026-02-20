@@ -32,45 +32,48 @@ const requestWithRetry = async (config, retries = 5, backoff = 1000) => {
  * Automatically switches between ID verification and Reference verification.
  * @param {string|number} identifier - The FLW ID (number) or tx_ref (string)
  */
-const verifyTransaction = async (identifier) => {
-    if (!identifier) throw new Error("Transaction identifier is required");
+const verifyTransaction = async (tx_ref) => {
+    if (!tx_ref) throw new Error("Transaction reference (tx_ref) is required");
 
-    // Check if the identifier is a reference (contains non-numeric characters)
-    // IDs are strictly numeric, tx_refs contain letters/dashes like "FUND-"
-    const isReference = isNaN(identifier) || typeof identifier === 'string'; 
-    
-    let config;
-
-    if (isReference) {
-        // Use the verify_by_reference endpoint
-        config = {
-            method: 'get',
-            url: `${FLW_BASE_URL}/transactions/verify_by_reference`,
-            params: { tx_ref: identifier }, // Axios handles encoding automatically
-            ...flwHeader
-        };
-    } else {
-        // Use the ID-based verification endpoint
-        config = {
-            method: 'get',
-            url: `${FLW_BASE_URL}/transactions/${identifier}/verify`,
-            ...flwHeader
-        };
-    }
+    const config = {
+        method: 'GET',
+        url: `${FLW_BASE_URL}/transactions/verify_by_reference`,
+        // Axios handles query string serialization automatically
+        params: { 
+            tx_ref: String(tx_ref).trim() 
+        },
+        headers: {
+            ...flwHeader.headers, // Spreading headers from your existing config
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+    };
 
     try {
-        const response = await requestWithRetry(config);
+        // Using axios directly or via your requestWithRetry wrapper
+        const response = await axios(config);
         
-        // Flutterwave verify_by_reference sometimes returns data in an array 
-        // or directly as an object depending on the account configuration
+        console.log(response)
+        /**
+         * Axios wraps the response body in .data
+         * Flutterwave's response structure is { status: "success", data: [...] }
+         */
         let txData = response.data.data;
+
         if (Array.isArray(txData)) {
+            // Take the most relevant attempt
             txData = txData[0];
         }
 
         return txData;
     } catch (error) {
-        // If it's a 400/404, we bubble it up so the sync job can log it as "Not Found"
+        // Axios provides the full response in error.response if the server replied
+        const status = error.response?.status || 'NETWORK_ERROR';
+        const message = error.response?.data?.message || error.message;
+
+        console.error(`[FLW Verify Error] Ref: ${tx_ref} | Status: ${status} | Msg: ${message}`);
+        
+        // Re-throw so your Webhook or Sync Job can handle the failure (e.g., retry)
         throw error;
     }
 };

@@ -35,7 +35,8 @@ const calculateMyPrice = (providerAmount) => {
 const fetchAvailablePlans = async () => {
     try {
         const response = await axios.get(`${BASE_URL}/APIDatabundlePlansV2.asp`, {
-            params: { UserID: USER_ID }
+            params: { UserID: USER_ID },
+            timeout: 15000,  
         });
 
         const data = response.data;
@@ -84,7 +85,6 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
         const url = `${BASE_URL}/APIDatabundleV1.asp?${queryParams.toString()}`;
         
         // DEBUG: Copy this URL from your console and paste it into a browser to see if it works
-        console.log(`[Data Provider] Full Request URL: ${url}`);
 
         // 2. Execute Fetch with User-Agent
         const response = await fetch(url, {
@@ -130,7 +130,8 @@ const queryTransaction = async (orderId) => {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 OrderID: orderId
-            }
+            },
+            timeout: 15000,  
         });
         return response.data;
     } catch (error) {
@@ -148,7 +149,8 @@ const cancelTransaction = async (orderId) => {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 OrderID: orderId
-            }
+            },
+            timeout: 15000,  
         });
         return response.data;
     } catch (error) {

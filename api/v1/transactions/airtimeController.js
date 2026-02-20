@@ -2,13 +2,25 @@ const prisma = require('@/lib/prisma');
 const airtimeProvider = require('@/services/airtimeProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-
+const { z } = require('zod');
 /**
  * Handles Airtime Purchase Logic
  * Updates wallet balance and increments totalSpent for accountability.
  */
+
+const purchaseAirtimeSchema = z.object({
+        network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
+        amount:  z.number(),
+        phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
+    });
+
 const purchaseAirtime = async (req, res) => {
-    const { network, amount, phoneNumber } = req.body;
+    const parsed = purchaseAirtimeSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ status:"ERROR", message: parsed.error.errors[0].message });
+    }
+
+    const { network, amount, phoneNumber } = parsed.data;
     const userId = req.user.id; 
 
     if (!network || !amount || !phoneNumber) {

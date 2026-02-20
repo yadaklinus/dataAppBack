@@ -1,13 +1,24 @@
 const prisma = require('@/lib/prisma');
 const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-
+const { z } = require('zod');
 /**
  * Handles the purchase and generation of Recharge Card PINs
  * Updates totalSpent for accountability.
  */
+
+const purchasePinSchema = z.object({
+        network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
+        value:  z.enum(['100','200','500']),
+        quantity: z.number().min(1).max(100),
+});
 const printPins = async (req, res) => {
-    const { network, value, quantity } = req.body;
+    const parsed = purchasePinSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ status:"ERROR", message: parsed.error.errors[0].message });
+    }
+
+    const { network, value, quantity } = parsed.data;
     const userId = req.user.id;
 
     if (!network || !value || !quantity) {
@@ -17,6 +28,14 @@ const printPins = async (req, res) => {
     const qty = parseInt(quantity);
     const faceValue = parseInt(value);
     const totalCost = faceValue * qty;
+
+    if (isNaN(qty) || qty < 1 || qty > 100) {
+        return res.status(400).json({ status:"ERROR", message:"Quantity must be between 1 and 100" });
+    }
+    if (![100, 200, 500].includes(faceValue)) {
+        return res.status(400).json({ status:"ERROR", message:"Value must be 100, 200, or 500" });
+    }
+
 
     try {
         const result = await prisma.$transaction(async (tx) => {
@@ -65,7 +84,7 @@ const printPins = async (req, res) => {
                 soldAt: new Date()
             }));
 
-            await tx.rechargePin.createMany({ data: pinRecords });
+            await prisma.rechargePin.createMany({ data: pinRecords });
 
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
@@ -101,4 +120,30 @@ const printPins = async (req, res) => {
     }
 };
 
-module.exports = { printPins, getTransactionPins: async (req, res) => { /* Logic remains same */ } };
+const getTransactionPins = async (req, res) => {
+    const { reference } = req.params;
+    const userId = req.user.id;
+
+    try {
+        const transaction = await prisma.transaction.findUnique({
+            where: { reference },
+            include: { printedPins: true }
+        });
+
+        if (!transaction || transaction.userId !== userId) {
+            return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
+        }
+
+        return res.status(200).json({
+            status: "OK",
+            data: {
+                details: transaction,
+                pins: transaction.printedPins
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "ERROR", message: "Error retrieving PINs" });
+    }
+};
+
+module.exports = { printPins, getTransactionPins };

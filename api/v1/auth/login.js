@@ -2,8 +2,16 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const prisma = require('@/lib/prisma');
 
+const DUMMY_HASH = "$2b$12$invalidhashtopreventtimingattacksXXXXXXXXXXXXXXXXXX";
+
 // Use a strong secret from your .env file
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key_123';
+
+if(!process.env.JWT_SECRET){
+    console.error("FATAL: JWT_SECRET env var is not set");
+    process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_EXPIRY = '24h';
 
 const login = async (req, res) => {
@@ -24,6 +32,8 @@ const login = async (req, res) => {
             include: { kycData: true } // Including KYC in case you need it on the frontend
         });
 
+        const hashToCompare = user ? user.passwordHash : DUMMY_HASH;
+
         if (!user) {
             return res.status(401).json({
                 status: "ERROR",
@@ -32,7 +42,7 @@ const login = async (req, res) => {
         }
 
         // 3. Verify Password
-        const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+        const isPasswordValid = await bcrypt.compare(password, hashToCompare);
         if (!isPasswordValid) {
             return res.status(401).json({
                 status: "ERROR",

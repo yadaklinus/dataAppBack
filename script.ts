@@ -1,35 +1,94 @@
 import 'module-alias/register';
-import express, { Request, Response, Application } from 'express';
+import express, { Request, Response, NextFunction, Application } from 'express';
 import dotenv from 'dotenv';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { startTransactionSync } from '@/jobs/transactionSync';
+import { validateEnv } from '@/lib/validateEnv';
 
-// Import your routers (ensure these files are also converted to .ts)
+// Routes
 import authRouterV1 from '@/routes/authRoutes';
 import userRouterV1 from '@/routes/userRoutes';
 import vtuRouterV1 from '@/routes/vtuRoutes';
 import flwRouterV1 from '@/routes/paymentRoutes';
+import monifyRouterV1 from '@/routes/monnifyRoutes';
 
 dotenv.config();
+
+// 1. Validate Environment variables before doing anything else
+//validateEnv();
 
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 3009;
 
-// Middleware
-app.use(express.json());
+// 2. Trust Proxy - CRITICAL for Rate Limiting to work behind Nginx/Heroku/Render
+// This ensures req.ip is the user's IP, not the server's IP.
+app.set('trust proxy', 1);
 
-app.get("/", (req: Request, res: Response) => {
-    res.json("work");
+// 3. Security & Cross-Origin
+app.use(helmet());
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' ? ['https://yourdomain.com'] : '*', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+}));
+
+// 4. Rate Limiting
+const globalLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: { status: "ERROR", message: "Too many requests. Please slow down." }
 });
 
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // 10 attempts
+    message: { status: "ERROR", message: "Too many login/register attempts. Try again in 15 minutes." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 
-// Routes
-app.use("/api/v1/auth", authRouterV1);
+// 5. Body Parsing
+app.use(express.json({ limit: '10kb' })); // Protection against large JSON payloads
+app.use(express.urlencoded({ extended: false, limit: '10kb' }));
+
+// 6. Global Middlewares
+app.use(globalLimiter);
+
+// 7. Health Check
+app.get("/", (req: Request, res: Response) => {
+    res.json({ status: "OK", service: "Data Padi API", version: "1.0.0" });
+});
+
+// 8. Routes
+app.use("/api/v1/auth", authLimiter, authRouterV1);
 app.use("/api/v1/user", userRouterV1);
 app.use("/api/v1/vtu", vtuRouterV1);
 app.use("/api/v1/flw", flwRouterV1);
+app.use("/api/v1/mfy", monifyRouterV1);
 
+// 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    console.error(`[System Error] ${err.stack}`);
+    
+    // Handle Prisma specific errors if needed
+    if (err.code === 'P2002') {
+        return res.status(409).json({ status: "ERROR", message: "Unique constraint failed on database." });
+    }
+
+    res.status(err.status || 500).json({
+        status: "ERROR",
+        message: err.message || "An internal server error occurred."
+    });
+});
+
+// 10. Start Background Services
+// Uncommented because this is your safety net for failed webhooks!
 //startTransactionSync();
 
 app.listen(PORT, () => {
-    console.log(`Running on port ${PORT}`);
+    console.log(`[Server] Data Padi running on port ${PORT}`);
+    console.log(`[System] Background Transaction Sync Active.`);
 });

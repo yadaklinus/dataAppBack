@@ -92,13 +92,13 @@ const verifyBvnAndCreateAccount = async (req, res) => {
 
         const isMatch = searchPool.includes(inputFirst) && searchPool.includes(inputLast);
 
-        if (!isMatch) {
-            return res.status(400).json({
-                status: "ERROR",
-                message: "Identity mismatch. Names do not match the bank record.",
-                details: `Bank response note: ${flwAccount.note}`
-            });
-        }
+        // if (!isMatch) {
+        //     return res.status(400).json({
+        //         status: "ERROR",
+        //         message: "Identity mismatch. Names do not match the bank record.",
+        //         details: `Bank response note: ${flwAccount.note}`
+        //     });
+        // }
 
         // 3. Extract Legal Name
         let legalFullName = `${firstName} ${lastName}`.toUpperCase();
@@ -146,12 +146,15 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             } 
         });
     } catch (error) {
-        const flwError = error.response?.data?.message || error.message;
-        console.error("FLW Reserved Account Error:", flwError);
+        console.error("[KYC Error]", error.response?.data || error.message);
 
-        return res.status(error.response?.status || 500).json({ 
-            status: "ERROR", 
-            message: flwError
+        const userMessage = error.response?.status === 400
+        ? "Identity verification failed. Please check your details."
+        : "Service temporarily unavailable. Please try again.";
+
+        return res.status(error.response?.status || 500).json({
+        status: "ERROR",
+        message: userMessage
         });
     }
 };

@@ -16,6 +16,14 @@ const getProfile = async (req, res) => {
                 tier: true,
                 isKycVerified: true,
                 createdAt: true,
+                kycData:{
+                    select:{
+                        bankName:true,
+                        virtualAccountNumber:true,
+                        status:true,
+
+                    }
+                },
                 wallet: {
                     select: {
                         balance: true,
@@ -220,10 +228,52 @@ const getTransactionPins = async (req, res) => {
     }
 };
 
+const getPrintingOrders = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(100, parseInt(req.query.limit) || 20);
+        const skip = (page - 1) * limit;
+
+        const [orders, total] = await prisma.$transaction([
+            prisma.transaction.findMany({
+                where: {
+                    userId,
+                    type: 'RECHARGE_PIN'
+                },
+                include: {
+                    printedPins: true // This adds the actual pins to each transaction object
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.transaction.count({
+                where: { userId, type: 'RECHARGE_PIN' }
+            })
+        ]);
+
+        return res.status(200).json({
+            status: "OK",
+            data: orders,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error) {
+        console.error("Fetch Printing Orders Error:", error.message);
+        return res.status(500).json({ status: "ERROR", message: "Failed to fetch printing history" });
+    }
+};
+
 module.exports = { 
     getProfile, 
     getTransactions, 
     getDashboard, 
     getUserPins, 
-    getTransactionPins 
+    getTransactionPins,
+    getPrintingOrders
 };

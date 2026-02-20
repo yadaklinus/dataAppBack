@@ -17,6 +17,7 @@ router.get('/profile', userController.getProfile);
  * @desc    Get aggregate data for home screen (Balance + Recent Txns)
  */
 router.get('/dashboard', userController.getDashboard);
+router.get('/pins', userController.getPrintingOrders);
 
 /**
  * @route   GET /api/user/transactions
