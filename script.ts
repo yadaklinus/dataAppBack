@@ -13,6 +13,7 @@ import userRouterV1 from '@/routes/userRoutes';
 import vtuRouterV1 from '@/routes/vtuRoutes';
 import flwRouterV1 from '@/routes/paymentRoutes';
 import monifyRouterV1 from '@/routes/monnifyRoutes';
+import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 
 dotenv.config();
 
@@ -87,6 +88,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 // 10. Start Background Services
 // Uncommented because this is your safety net for failed webhooks!
 //startTransactionSync();
+startMonnifyTransactionSync()
 
 app.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);

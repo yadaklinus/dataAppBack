@@ -16,6 +16,13 @@ const getWalletCreditAmount = (totalReceived) => {
     return Math.floor(total * 0.98);
 };
 
+function safeCompare(a, b) {
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch { return false; }
+}
+
+
 const handleMonnifyWebhook = async (req, res) => {
     console.log("hit")
     const MONNIFY_SECRET = process.env.MONNIFY_SECRET_KEY;
@@ -28,8 +35,8 @@ const handleMonnifyWebhook = async (req, res) => {
         .update(JSON.stringify(req.body))
         .digest('hex');
 
-    if (signature !== computedHash) {
-        console.error('[Monnify Webhook] Invalid Signature detected.');
+    if (!signature || !safeCompare(signature, computedHash)) {
+        console.warn("[Monnify Webhook] Invalid signature from IP:", req.ip);
         return res.status(401).end();
     }
 

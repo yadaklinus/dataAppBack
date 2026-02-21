@@ -36,7 +36,7 @@ const startTransactionSync = () => {
                 
                 try {
                     // 2. Query Flutterwave API
-                    const verification = await paymentProvider.verifyTransaction("FUND-1771488894706-b23bf6ae-410a-45d3-8364-5f7a034733b0");
+                    const verification = await paymentProvider.verifyTransaction(txn.reference);
 
                     if (!verification) {
                         console.log(`[Verify] ⚠️ No response from Provider for Ref: ${txn.reference}`);

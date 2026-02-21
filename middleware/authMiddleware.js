@@ -1,8 +1,17 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('@/lib/prisma');
 
+
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET env var is not set");
+  process.exit(1);
+}
+
+
 // Use the same secret key as your login logic
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key_123';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+
 
 /**
  * Middleware to protect routes and manage "server sessions"
