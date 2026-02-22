@@ -21,6 +21,6 @@ router.use(authMiddleware);
 router.post('/fund/init', monnifyController.initGatewayFunding);
 
 // Endpoint to verify BVN and link a dedicated reserved account
-router.post('/kyc/verify-bvn', monnifyController.verifyBvnAndCreateAccount);
+router.post('/kyc/create', monnifyController.createAccount);
 
 module.exports = router;

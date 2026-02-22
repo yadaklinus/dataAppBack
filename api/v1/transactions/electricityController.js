@@ -2,6 +2,7 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const electricityProvider = require('@/services/electricityProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
+const { generateRef } = require('@/lib/crypto')
 
 // --- SCHEMAS ---
 
@@ -117,7 +118,7 @@ const purchaseElectricity = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `ELEC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const requestId = generateRef("ELEC")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,

@@ -15,7 +15,9 @@ const TOKEN_EXPIRY = '24h';
 
 const login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { password } = req.body;
+        const email = req.body.email.toLowerCase().trim();
+        
 
         // 1. Basic Validation
         if (!email || !password) {

@@ -6,6 +6,18 @@ const { TransactionType, TransactionStatus } = require('@prisma/client');
 /**
  * Start Gateway Funding (Standard Checkout)
  */
+const kycSchema = z.object({
+    bvn: z.string().length(11, "A valid 11-digit BVN is required")
+});
+
+/**
+ * Helper: Format Zod errors
+ */
+const formatZodError = (error) => {
+    if (!error || !error.issues) return "Validation failed";
+    return error.issues.map(err => err.message).join(", ");
+};
+
 const initGatewayFunding = async (req, res) => {
     const { amount } = req.body;
     const userId = req.user.id;
@@ -39,18 +51,21 @@ const initGatewayFunding = async (req, res) => {
  * Verify BVN and Generate Dedicated (Reserved) Virtual Account
  * Logic: Checks if user already has an account before calling Flutterwave.
  */
-const verifyBvnAndCreateAccount = async (req, res) => {
-    const { bvn, firstName, lastName } = req.body;
+const createAccount = async (req, res) => {
+    const validation = kycSchema.safeParse(req.body);
+
+    if (!validation.success) {
+        return res.status(400).json({ 
+            status: "ERROR", 
+            message: formatZodError(validation.error) 
+        });
+    }
+
+    const { bvn } = validation.data;
     const userId = req.user.id;
 
-    if (!bvn || bvn.length !== 11) {
-        return res.status(400).json({ status: "ERROR", message: "A valid 11-digit BVN is required" });
-    }
-    if (!firstName || !lastName) {
-        return res.status(400).json({ status: "ERROR", message: "First and Last names are required" });
-    }
-
     try {
+        // 1. Fetch user with existing KYC state
         const user = await prisma.user.findUnique({ 
             where: { id: userId },
             include: { kycData: true }
@@ -58,12 +73,11 @@ const verifyBvnAndCreateAccount = async (req, res) => {
 
         if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
 
-        // --- BUILDER CHECK: PREVENT DUPLICATE ACCOUNTS ---
-        // If the user already has a virtual account number, don't call FLW again.
+        // 2. Idempotency Check
         if (user.kycData?.virtualAccountNumber) {
             return res.status(200).json({ 
                 status: "OK", 
-                message: "User already has a dedicated account.", 
+                message: "Dedicated account already exists.", 
                 data: {
                     bank: user.kycData.bankName,
                     accountNumber: user.kycData.virtualAccountNumber,
@@ -72,49 +86,25 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             });
         }
 
-        // 1. Call Flutterwave
+        /**
+         * 3. Request Flutterwave Reserved Account
+         * We pass user.fullName (the userName from registration) directly.
+         */
         const flwAccount = await paymentProvider.createVirtualAccount({
             email: user.email,
             bvn: bvn,
             phoneNumber: user.phoneNumber,
-            fullName: `${firstName} ${lastName}`,
+            fullName: user.fullName, // Use stored registration name
             userId: userId
         });
 
-        // 2. SMART NAME MATCHING
-        const returnedFirst = (flwAccount.firstname || "").toUpperCase().trim();
-        const returnedLast = (flwAccount.lastname || "").toUpperCase().trim();
-        const flwNote = (flwAccount.note || "").toUpperCase().trim();
-        
-        const searchPool = `${returnedFirst} ${returnedLast} ${flwNote}`;
-        const inputFirst = firstName.toUpperCase().trim();
-        const inputLast = lastName.toUpperCase().trim();
-
-        const isMatch = searchPool.includes(inputFirst) && searchPool.includes(inputLast);
-
-        // if (!isMatch) {
-        //     return res.status(400).json({
-        //         status: "ERROR",
-        //         message: "Identity mismatch. Names do not match the bank record.",
-        //         details: `Bank response note: ${flwAccount.note}`
-        //     });
-        // }
-
-        // 3. Extract Legal Name
-        let legalFullName = `${firstName} ${lastName}`.toUpperCase();
-        if (flwAccount.note) {
-            const noteUpper = flwAccount.note.toUpperCase();
-            const startIdx = noteUpper.indexOf("DATA PADI");
-            const endIdx = noteUpper.lastIndexOf("FLW");
-            
-            if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-                legalFullName = noteUpper.substring(startIdx + 9, endIdx).trim();
-            }
-        }
-
+        // 4. Secure the sensitive data
         const encryptedBvn = encrypt(bvn);
 
-        // 4. Atomic Database Update
+        /**
+         * 5. Atomic DB Persistance
+         * We update KYC and the user's verification flag in one go.
+         */
         await prisma.$transaction([
             prisma.kycData.update({
                 where: { userId },
@@ -129,34 +119,32 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             }),
             prisma.user.update({ 
                 where: { id: userId }, 
-                data: { 
-                    isKycVerified: true,
-                    fullName: legalFullName 
-                } 
+                data: { isKycVerified: true } 
             })
         ]);
 
         res.status(200).json({ 
             status: "OK", 
-            message: "Reserved account created successfully", 
+            message: "Dedicated bank account activated", 
             data: {
                 bank: flwAccount.bank_name,
                 accountNumber: flwAccount.account_number,
-                accountName: `Data Padi - ${legalFullName}`
+                accountName: `Data Padi - ${user.fullName}`
             } 
         });
     } catch (error) {
-        console.error("[KYC Error]", error.response?.data || error.message);
+        console.error("[Flutterwave KYC Error]:", error.message);
+        
+        // Handle common FLW errors (like BVN mismatch on their end)
+        const errorMessage = error.message?.includes("invalid") || error.message?.includes("mismatch")
+            ? "Identity verification failed. Please ensure your BVN is correct."
+            : "Failed to create dedicated account. Please try again later.";
 
-        const userMessage = error.response?.status === 400
-        ? "Identity verification failed. Please check your details."
-        : "Service temporarily unavailable. Please try again.";
-
-        return res.status(error.response?.status || 500).json({
-        status: "ERROR",
-        message: userMessage
+        return res.status(500).json({
+            status: "ERROR",
+            message: errorMessage
         });
     }
 };
 
-module.exports = { initGatewayFunding, verifyBvnAndCreateAccount };
+module.exports = { initGatewayFunding, createAccount };

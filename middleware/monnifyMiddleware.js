@@ -85,33 +85,36 @@ const handleMonnifyWebhook = async (req, res) => {
         } else {
             // CASE: Standard Gateway (One-time payment)
             // Extract userId from our FUND-MNFY-timestamp-uuid format
-            const parts = paymentRef.split('-');
-            userId = parts.slice(3).join('-');
+            // const parts = paymentRef.split('-');
+            // userId = parts.slice(3).join('-');
 
             const existingTx = await prisma.transaction.findUnique({
                 where: { reference: paymentRef }
             });
 
+            if (!existingTx) {
+                console.error(`[Webhook] Unknown reference: ${reference}`);
+                return; // Reject unknown references
+            }
+
+
+            userId = existingTx.userId
+
             // Use the principal amount we calculated during initialization
-            walletCreditAmount = existingTx ? Number(existingTx.amount) : getWalletCreditAmount(amountPaid);
+            walletCreditAmount = getWalletCreditAmount(amountPaid);
         }
 
         if (!userId) return;
 
+        const fee = amountPaid - walletCreditAmount;
+
         // 5. Atomic DB Update (Idempotent)
         await prisma.$transaction(async (tx) => {
             // Prevent double-crediting
-            const alreadyProcessed = await tx.transaction.findUnique({
-                where: { providerReference: flwId }
-            });
 
-            if (alreadyProcessed && alreadyProcessed.status === TransactionStatus.SUCCESS) {
-                return;
-            }
-
-            const fee = amountPaid - walletCreditAmount;
-
-            await tx.transaction.upsert({
+            
+             try {
+                await tx.transaction.upsert({
                 where: { reference: internalReference },
                 update: {
                     status: TransactionStatus.SUCCESS,
@@ -130,14 +133,22 @@ const handleMonnifyWebhook = async (req, res) => {
                         method: eventData.paymentMethod,
                         monnifyRef: flwId,
                         totalReceived: amountPaid
+                        }
                     }
-                }
-            });
+                });
+                // Only increment wallet AFTER confirmed transaction record
+                await tx.wallet.update({
+                    where: { userId },
+                    data: { balance: { increment: walletCreditAmount } }
+                });
 
-            await tx.wallet.update({
-                where: { userId },
-                data: { balance: { increment: walletCreditAmount } }
-            });
+            } catch (e) {
+                if (e.code === 'P2002') {
+                    console.log(`[Webhook] Duplicate suppressed: ${flwId}`);
+                    return; // Already processed by concurrent request
+                }
+                throw e;
+            }
 
             console.log(`[Monnify Webhook] Credited User ${userId} with ₦${walletCreditAmount}`);
         });

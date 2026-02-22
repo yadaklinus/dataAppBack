@@ -3,6 +3,8 @@ const airtimeProvider = require('@/services/airtimeProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
+const { generateRef } = require('@/lib/crypto');
+
 /**
  * Handles Airtime Purchase Logic
  * Updates wallet balance and increments totalSpent for accountability.
@@ -54,7 +56,7 @@ const purchaseAirtime = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `AIR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const requestId = generateRef("AIR")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -148,7 +150,7 @@ const getAirtimeStatus = async (req, res) => {
             include: { user: { select: { id: true, fullName: true } } }
         });
         
-        if (!txn) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
+        if (!txn || txn.userId !== req.user.id) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
 
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {

@@ -3,6 +3,7 @@ const dataProvider = require('@/services/dataProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
+const { generateRef } = require('@/lib/crypto')
 
 const purchaseDataSchema = z.object({
         network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
@@ -98,7 +99,7 @@ const purchaseData = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `DAT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const requestId = generateRef("DAT")
             
             const transaction = await tx.transaction.create({
                 data: {
@@ -186,7 +187,7 @@ const getDataStatus = async (req, res) => {
             include: { user: { select: { id: true, fullName: true, email: true } } }
         });
         
-        if (!txn) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
+        if (!txn || txn.userId !== req.user.id) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
 
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {

@@ -10,6 +10,6 @@ router.post('/webhook/flutterwave', webhookController.handleFlutterwaveWebhook);
 // PRIVATE: User actions
 router.use(authMiddleware);
 router.post('/fund/init', fundingController.initGatewayFunding);
-router.post('/kyc/verify-bvn', fundingController.verifyBvnAndCreateAccount);
+router.post('/kyc/create', fundingController.createAccount);
 
 module.exports = router;

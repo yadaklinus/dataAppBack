@@ -3,6 +3,7 @@ const prisma = require('@/lib/prisma');
 const cableProvider = require('@/services/cableProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
+const { generateRef } = require('@/lib/crypto')
 // --- SCHEMAS ---
 
 const verifyIUCSchema = z.object({
@@ -146,7 +147,7 @@ const purchaseSubscription = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `CAB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const requestId = generateRef("CAB")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,

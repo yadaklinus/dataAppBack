@@ -71,7 +71,11 @@ const initializePayment = async (userId, amount, email, fullName) => {
     const token = await getAccessToken();
     const paymentReference = `FUND-MNFY-${Date.now()}-${userId}`;
     
-    let baseUrl = 'https://example.com';
+    const baseUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+    if (!baseUrl || baseUrl.startsWith('http://') && process.env.NODE_ENV === 'production') {
+        throw new Error("FRONTEND_URL must be set and use HTTPS in production");
+    }
+
     baseUrl = baseUrl.replace(/\/$/, '');
     
     const options = {

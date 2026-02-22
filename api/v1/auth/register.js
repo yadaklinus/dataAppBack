@@ -3,14 +3,11 @@ const prisma = require('@/lib/prisma');
 const SALT_ROUNDS = 12;
 const validator = require('validator');
 
-/**
- * Handles User Registration
- * Creates User, Wallet, and placeholder KYC records atomically.
- * Prepared for Dedicated Virtual Accounts (Verified) and Gateway (Unverified).
- */
+
 const register = async (req, res) => {
     try {
-        const { userName, email, password, phoneNumber } = req.body;
+        const { userName, password, phoneNumber } = req.body;
+        const email = req.body.email.toLowerCase().trim();
 
         // 1. Basic Validation
         if (!email || !password || !phoneNumber) {

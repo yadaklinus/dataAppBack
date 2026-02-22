@@ -2,7 +2,7 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const eduProvider = require('@/services/educationProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-
+const { generateRef } = require('@/lib/crypto')
 // --- SCHEMAS ---
 
 const verifyJambSchema = z.object({
@@ -83,7 +83,7 @@ const purchasePin = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `EDU-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const requestId = generateRef("EDU")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,

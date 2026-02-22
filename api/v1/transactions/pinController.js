@@ -2,6 +2,8 @@ const prisma = require('@/lib/prisma');
 const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
+const { generateRef } = require('@/lib/crypto')
+
 /**
  * Handles the purchase and generation of Recharge Card PINs
  * Updates totalSpent for accountability.
@@ -45,8 +47,7 @@ const printPins = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = `PRT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
+            const requestId = generateRef("PRT")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,

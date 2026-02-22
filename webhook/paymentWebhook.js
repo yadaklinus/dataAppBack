@@ -53,7 +53,7 @@ const handleFlutterwaveWebhook = async (req, res) => {
     const payload = req.body;
     res.status(200).end(); // Always acknowledge 200 to FLW first
 
-    if (payload.event !== 'charge.completed' && payload.status !== 'successful') return;
+    if (payload.event !== 'charge.completed' || payload.status !== 'successful') return;
 
     try {
         const data = payload.data || payload;
@@ -77,12 +77,20 @@ const handleFlutterwaveWebhook = async (req, res) => {
 
         // CASE A: Standard Gateway (Card/USSD)
         if (reference && reference.startsWith('FUND-')) {
-            const parts = reference.split('-');
-            userId = parts.slice(2).join('-'); // Extract UUID
+            // const parts = reference.split('-');
+            // userId = parts.slice(2).join('-'); // Extract UUID
             
             const existingTx = await prisma.transaction.findUnique({
                 where: { reference }
             });
+
+            if (!existingTx) {
+                console.error(`[Webhook] Unknown reference: ${reference}`);
+                return; // Reject unknown references
+            }
+
+
+            userId = existingTx.userId
 
             if (existingTx) {
                 walletCreditAmount = Number(existingTx.amount);

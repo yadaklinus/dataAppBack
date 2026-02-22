@@ -20,7 +20,7 @@ import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 dotenv.config();
 
 // 1. Validate Environment variables before doing anything else
-//validateEnv();
+validateEnv();
 
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 3009;

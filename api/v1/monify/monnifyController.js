@@ -7,6 +7,10 @@ const { TransactionType, TransactionStatus } = require('@prisma/client');
  * Start Monnify Gateway Funding (Standard Checkout)
  * Initialized with the requested amount; fees are handled internally by the provider service.
  */
+const kycSchema = z.object({
+    bvn: z.string().length(11, "A valid 11-digit BVN is required")
+});
+
 const initGatewayFunding = async (req, res) => {
     const { amount } = req.body;
     const userId = req.user.id;
@@ -15,7 +19,6 @@ const initGatewayFunding = async (req, res) => {
         return res.status(400).json({ status: "ERROR", message: "Minimum funding amount is ₦100" });
     }
 
-    console.log(amount)
 
     try {
         const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -63,20 +66,20 @@ const initGatewayFunding = async (req, res) => {
 /**
  * Verify BVN and Create Dedicated Monnify Virtual Account
  */
-const verifyBvnAndCreateAccount = async (req, res) => {
-    const { bvn, firstName, lastName } = req.body;
+const createAccount = async (req, res) => {
+    const validation = kycSchema.safeParse(req.body);
+
+    if (!validation.success) {
+        return res.status(400).json({ 
+            status: "ERROR", 
+            message: formatZodError(validation.error) 
+        });
+    }
+
+    const { bvn } = validation.data;
     const userId = req.user.id;
 
-    // 1. Input Validation
-    if (!bvn || bvn.length !== 11) {
-        return res.status(400).json({ status: "ERROR", message: "A valid 11-digit BVN is required" });
-    }
-    if (!firstName || !lastName) {
-        return res.status(400).json({ status: "ERROR", message: "First and Last names are required for verification" });
-    }
-
     try {
-        // 2. Check current KYC status
         const user = await prisma.user.findUnique({ 
             where: { id: userId },
             include: { kycData: true }
@@ -96,35 +99,22 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             });
         }
 
-        // 3. Request Monnify Reserved Account
+        /**
+         * 1. Request Monnify Reserved Account
+         * We use user.fullName (which is the userName from registration) 
+         * as the account name directly.
+         */
         const mnfyAccount = await monnifyProvider.createVirtualAccount({
             email: user.email,
             bvn: bvn,
-            fullName: `${firstName}`,
+            fullName: user.fullName, 
             userId: userId
         });
 
-        /**
-         * 4. Identity Match Check
-         * We verify that the name Monnify returned matches the user's input.
-         */
-        const searchPool = mnfyAccount.account_name.toUpperCase();
-        const inputFirst = firstName.toUpperCase().trim();
-        const inputLast = lastName.toUpperCase().trim();
-
-        const isMatch = searchPool.includes(inputFirst) && searchPool.includes(inputLast);
-
-        // if (!isMatch) {
-        //     return res.status(400).json({
-        //         status: "ERROR",
-        //         message: "Identity mismatch. Provided names do not match your BVN record.",
-        //         details: `Bank Name Record: ${mnfyAccount.account_name}`
-        //     });
-        // }
-
-        // 5. Encrypt BVN and Persist to DB
+        // 2. Encrypt BVN for security
         const encryptedBvn = encrypt(bvn);
 
+        // 3. Atomic DB Update
         await prisma.$transaction([
             prisma.kycData.update({
                 where: { userId },
@@ -139,10 +129,7 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             }),
             prisma.user.update({ 
                 where: { id: userId }, 
-                data: { 
-                    isKycVerified: true,
-                    
-                } 
+                data: { isKycVerified: true } 
             })
         ]);
 
@@ -152,16 +139,16 @@ const verifyBvnAndCreateAccount = async (req, res) => {
             data: {
                 bank: mnfyAccount.bank_name,
                 accountNumber: mnfyAccount.account_number,
-                accountName: mnfyAccount.account_name
+                accountName: mnfyAccount.account_name // Legal name from Monnify
             } 
         });
     } catch (error) {
         console.error("[Monnify KYC Error]:", error.message);
-        return res.status(500).json({ 
-            status: "ERROR", 
-            message: error.message || "Failed to create dedicated account"
+        return res.status(500).json({
+            status: "ERROR",
+            message: "Failed to create dedicated account. Please check your BVN."
         });
     }
 };
 
-module.exports = { initGatewayFunding, verifyBvnAndCreateAccount };
+module.exports = { initGatewayFunding, createAccount };
