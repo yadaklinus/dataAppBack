@@ -91,7 +91,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // 10. Start Background Services
 // Uncommented because this is your safety net for failed webhooks!
-//startTransactionSync();
+startTransactionSync();
 startMonnifyTransactionSync()
 
 app.listen(PORT, () => {
