@@ -93,6 +93,10 @@ const startMonnifyTransactionSync = () => {
                     const isNotFound = err.status === 404 || err.message?.includes('404');
                     if (isNotFound) {
                         console.log(`[Info] Ref: ${txn.reference} not found (User abandoned checkout).`);
+                        await prisma.transaction.update({
+                            where:{ id: txn.id },
+                            data:{status:TransactionStatus.FAILED} 
+                        })
                     } else {
                         console.error(`[Error] Ref: ${txn.reference} failed:`, err.message);
                     }

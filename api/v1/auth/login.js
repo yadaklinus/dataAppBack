@@ -4,7 +4,6 @@ const prisma = require('@/lib/prisma');
 
 const DUMMY_HASH = "$2b$12$invalidhashtopreventtimingattacksXXXXXXXXXXXXXXXXXX";
 
-// Use a strong secret from your .env file
 
 if(!process.env.JWT_SECRET){
     console.error("FATAL: JWT_SECRET env var is not set");

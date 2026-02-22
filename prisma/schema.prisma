@@ -88,6 +88,7 @@ enum TransactionType {
   CABLE_TV
   ELECTRICITY
   WALLET_FUNDING
+  EDUCATION
 }
 
 enum TransactionStatus {

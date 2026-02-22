@@ -13,6 +13,8 @@ import userRouterV1 from '@/routes/userRoutes';
 import vtuRouterV1 from '@/routes/vtuRoutes';
 import flwRouterV1 from '@/routes/paymentRoutes';
 import monifyRouterV1 from '@/routes/monnifyRoutes';
+import electrictyRouterV1 from '@/routes/electrictyRoutes';
+import cableRouterV1 from '@/routes/cableRoutes';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 
 dotenv.config();
@@ -69,6 +71,8 @@ app.use("/api/v1/user", userRouterV1);
 app.use("/api/v1/vtu", vtuRouterV1);
 app.use("/api/v1/flw", flwRouterV1);
 app.use("/api/v1/mfy", monifyRouterV1);
+app.use("/api/v1/elec", electrictyRouterV1);
+app.use("/api/v1/cable", cableRouterV1);
 
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
