@@ -2,7 +2,7 @@ const prisma = require('@/lib/prisma');
 const monnifyProvider = require('@/services/monnifyProvider');
 const { encrypt } = require('@/lib/crypto');
 const { TransactionType, TransactionStatus } = require('@prisma/client');
-
+const { z } = require('zod');
 /**
  * Start Monnify Gateway Funding (Standard Checkout)
  * Initialized with the requested amount; fees are handled internally by the provider service.
@@ -10,6 +10,11 @@ const { TransactionType, TransactionStatus } = require('@prisma/client');
 const kycSchema = z.object({
     bvn: z.string().length(11, "A valid 11-digit BVN is required")
 });
+
+const formatZodError = (error) => {
+    if (!error || !error.issues) return "Validation failed";
+    return error.issues.map(err => err.message).join(", ");
+};
 
 const initGatewayFunding = async (req, res) => {
     const { amount } = req.body;

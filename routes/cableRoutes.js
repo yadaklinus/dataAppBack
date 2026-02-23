@@ -3,24 +3,29 @@ const router = express.Router();
 const authMiddleware = require('@/middleware/authMiddleware');
 const cableController = require('@/api/v1/transactions/cableController');
 
-// --- ELECTRICITY ROUTES ---
+// --- CABLE / TV ROUTES ---
 
 /**
- * @route   GET /api/vtu/electricity/verify
- * @desc    Verify Meter Number and get Customer Name
+ * @route   GET /api/vtu/cable/packages
+ * @desc    Get available cable packages (Public - Frontend needs this before login)
  */
-router.use(authMiddleware)
-router.get('/verify', cableController.verifyIUC);
-
-
 router.get('/packages', cableController.getPackages);
 
+// ==========================================
+// PROTECTED ROUTES BELOW THIS LINE
+// ==========================================
+router.use(authMiddleware);
+
 /**
- * @route   POST /api/vtu/electricity/pay
- * @desc    Purchase electricity units / pay postpaid bill
+ * @route   GET /api/vtu/cable/verify
+ * @desc    Verify IUC/Smartcard Number and get Customer Name
+ */
+router.get('/verify', cableController.verifyIUC);
+
+/**
+ * @route   POST /api/vtu/cable/pay
+ * @desc    Purchase cable subscription
  */
 router.post('/pay', cableController.purchaseSubscription);
 
-// ... rest of file ...
-
-module.exports = router
+module.exports = router;

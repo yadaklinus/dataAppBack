@@ -6,7 +6,11 @@
 const MONNIFY_API_KEY = process.env.MONNIFY_API_KEY;
 const MONNIFY_SECRET_KEY = process.env.MONNIFY_SECRET_KEY;
 const MONNIFY_CONTRACT_CODE = process.env.MONNIFY_CONTRACT_CODE;
-const MONNIFY_BASE_URL = 'https://sandbox.monnify.com';
+const MONNIFY_BASE_URL = process.env.MONNIFY_BASE_URL || 'https://sandbox.monnify.com';
+  if (process.env.NODE_ENV === 'production' && MONNIFY_BASE_URL.includes('sandbox')) {
+    throw new Error('FATAL: Using sandbox Monnify URL in production!');
+  }
+
 let cachedToken = null;
 let tokenExpiry = null;
 
@@ -76,7 +80,7 @@ const initializePayment = async (userId, amount, email, fullName) => {
         throw new Error("FRONTEND_URL must be set and use HTTPS in production");
     }
 
-    baseUrl = baseUrl.replace(/\/$/, '');
+    
     
     const options = {
         method: 'POST',

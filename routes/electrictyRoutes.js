@@ -9,9 +9,12 @@ const electricityController = require('@/api/v1/transactions/electricityControll
  * @route   GET /api/vtu/electricity/verify
  * @desc    Verify Meter Number and get Customer Name
  */
+
+router.get('/disco', electricityController.getDiscos);
+
+
 router.use(authMiddleware)
 router.get('/verify', electricityController.verifyMeterNumber);
-router.get('/disco', electricityController.getDiscos);
 
 /**
  * @route   POST /api/vtu/electricity/pay

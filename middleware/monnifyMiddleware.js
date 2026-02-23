@@ -22,14 +22,11 @@ function safeCompare(a, b) {
   } catch { return false; }
 }
 
-
 const handleMonnifyWebhook = async (req, res) => {
-    console.log("hit")
     const MONNIFY_SECRET = process.env.MONNIFY_SECRET_KEY;
     const signature = req.headers['monnify-signature'];
 
     // 1. Security: Verify HMAC-SHA512 Signature
-    // Monnify sends the hash of the raw request body
     const computedHash = crypto
         .createHmac('sha512', MONNIFY_SECRET)
         .update(JSON.stringify(req.body))
@@ -45,14 +42,13 @@ const handleMonnifyWebhook = async (req, res) => {
 
     const { eventType, eventData } = req.body;
 
-    // We only care about successful transactions
     if (eventType !== 'SUCCESSFUL_TRANSACTION' || eventData.paymentStatus !== 'PAID') {
         return;
     }
 
     try {
         const flwId = eventData.transactionReference; // Monnify's internal ID
-        const paymentRef = eventData.paymentReference; // Our internal Ref (e.g., FUND-MNFY-...)
+        const paymentRef = eventData.paymentReference; // Our internal Ref
         const amountPaid = Number(eventData.amountPaid);
 
         // 3. Double-Check via API (Safety)
@@ -62,13 +58,10 @@ const handleMonnifyWebhook = async (req, res) => {
         let userId;
         let internalReference = paymentRef;
         let walletCreditAmount = 0;
-
-        // 4. Determine Association (Gateway vs Dedicated Account)
         const productType = eventData.product?.type;
 
+        // 4. Determine Association (Gateway vs Dedicated Account)
         if (productType === 'RESERVED_ACCOUNT') {
-            // CASE: Dedicated Virtual Account
-            // product.reference is what we stored in KycData.accountReference
             const accountRef = eventData.product.reference;
             const kycRecord = await prisma.kycData.findUnique({
                 where: { accountReference: accountRef }
@@ -80,27 +73,20 @@ const handleMonnifyWebhook = async (req, res) => {
             }
             
             userId = kycRecord.userId;
-            internalReference = `VA-MNFY-${flwId}`; // Unique ref for this specific credit
+            internalReference = `VA-MNFY-${flwId}`; 
             walletCreditAmount = getWalletCreditAmount(amountPaid);
         } else {
-            // CASE: Standard Gateway (One-time payment)
-            // Extract userId from our FUND-MNFY-timestamp-uuid format
-            // const parts = paymentRef.split('-');
-            // userId = parts.slice(3).join('-');
-
             const existingTx = await prisma.transaction.findUnique({
                 where: { reference: paymentRef }
             });
 
             if (!existingTx) {
-                console.error(`[Webhook] Unknown reference: ${reference}`);
-                return; // Reject unknown references
+                // Fix: Changed 'reference' to 'paymentRef' to avoid ReferenceError
+                console.error(`[Webhook] Unknown reference: ${paymentRef}`);
+                return; 
             }
 
-
-            userId = existingTx.userId
-
-            // Use the principal amount we calculated during initialization
+            userId = existingTx.userId;
             walletCreditAmount = getWalletCreditAmount(amountPaid);
         }
 
@@ -108,48 +94,71 @@ const handleMonnifyWebhook = async (req, res) => {
 
         const fee = amountPaid - walletCreditAmount;
 
-        // 5. Atomic DB Update (Idempotent)
+        // 5. Atomic DB Update (Idempotent & Race-Condition Safe)
         await prisma.$transaction(async (tx) => {
-            // Prevent double-crediting
-
             
-             try {
-                await tx.transaction.upsert({
-                where: { reference: internalReference },
-                update: {
-                    status: TransactionStatus.SUCCESS,
-                    providerReference: flwId,
-                    fee: fee
-                },
-                create: {
-                    userId,
-                    amount: walletCreditAmount,
-                    fee: fee,
-                    type: TransactionType.WALLET_FUNDING,
-                    status: TransactionStatus.SUCCESS,
-                    reference: internalReference,
-                    providerReference: flwId,
-                    metadata: {
-                        method: eventData.paymentMethod,
-                        monnifyRef: flwId,
-                        totalReceived: amountPaid
+            if (productType === 'RESERVED_ACCOUNT') {
+                // CASE A: Virtual Account Funding (Create new record)
+                try {
+                    await tx.transaction.create({
+                        data: {
+                            userId,
+                            amount: walletCreditAmount,
+                            fee: fee,
+                            type: TransactionType.WALLET_FUNDING,
+                            status: TransactionStatus.SUCCESS,
+                            reference: internalReference, // Must be mapped as @unique in Prisma schema
+                            providerReference: flwId,
+                            metadata: {
+                                method: eventData.paymentMethod,
+                                monnifyRef: flwId,
+                                totalReceived: amountPaid
+                            }
                         }
+                    });
+                    
+                    // Only hits this if create succeeds (meaning no duplicate existed)
+                    await tx.wallet.update({
+                        where: { userId },
+                        data: { balance: { increment: walletCreditAmount } }
+                    });
+
+                } catch (e) {
+                    if (e.code === 'P2002') {
+                        console.log(`[Webhook] Duplicate Virtual Account webhook suppressed: ${flwId}`);
+                        return; // Safely exit, already processed
+                    }
+                    throw e;
+                }
+            } else {
+                // CASE B: Standard Gateway (Update existing PENDING record)
+                // Use updateMany to prevent race conditions. It will only update if NOT already SUCCESS.
+                const updateResult = await tx.transaction.updateMany({
+                    where: { 
+                        reference: internalReference,
+                        status: { not: TransactionStatus.SUCCESS } 
+                    },
+                    data: {
+                        status: TransactionStatus.SUCCESS,
+                        providerReference: flwId,
+                        fee: fee
                     }
                 });
-                // Only increment wallet AFTER confirmed transaction record
+
+                // If count is 0, the record was already marked SUCCESS by a concurrent webhook
+                if (updateResult.count === 0) {
+                    console.log(`[Webhook] Duplicate Gateway webhook suppressed: ${flwId}`);
+                    return; 
+                }
+
+                // Only hits this if exactly 1 record was updated from PENDING to SUCCESS
                 await tx.wallet.update({
                     where: { userId },
                     data: { balance: { increment: walletCreditAmount } }
                 });
-
-            } catch (e) {
-                if (e.code === 'P2002') {
-                    console.log(`[Webhook] Duplicate suppressed: ${flwId}`);
-                    return; // Already processed by concurrent request
-                }
-                throw e;
             }
-
+            
+            // Console log outside the conditional blocks to confirm success
             console.log(`[Monnify Webhook] Credited User ${userId} with ₦${walletCreditAmount}`);
         });
 

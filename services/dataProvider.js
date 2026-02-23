@@ -20,7 +20,7 @@ const NETWORK_CODES = {
 };
 
 /**
- * Utility: Calculate your 12% marked-up price
+ * Utility: Calculate your 10% marked-up price
  */
 const calculateMyPrice = (providerAmount) => {
     const amount = parseFloat(providerAmount);
@@ -46,9 +46,10 @@ const fetchAvailablePlans = async () => {
             Object.keys(data.MOBILE_NETWORK).forEach(networkName => {
                 data.MOBILE_NETWORK[networkName].forEach(networkGroup => {
                     if (networkGroup.PRODUCT) {
+                        // Correctly map and inject SELLING_PRICE into the original object structure
                         networkGroup.PRODUCT = networkGroup.PRODUCT.map(plan => ({
                             ...plan,
-                            // We add our 12% markup here
+                            // We add our 10% markup here
                             SELLING_PRICE: calculateMyPrice(plan.PRODUCT_AMOUNT)
                         }));
                     }
@@ -71,37 +72,30 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
         const networkCode = NETWORK_CODES[network.toUpperCase()];
         if (!networkCode) throw new Error("Invalid network selection");
 
-        // 1. Build Query Params
-        const queryParams = new URLSearchParams({
-            UserID: USER_ID,
-            APIKey: API_KEY,
-            MobileNetwork: networkCode,
-            DataPlan: String(dataPlanId).trim(), // Force string and trim
-            MobileNumber: phoneNumber,
-            RequestID: requestId,
-            CallBackURL: process.env.CALLBACK_URL || ''
-        });
-
-        const url = `${BASE_URL}/APIDatabundleV1.asp?${queryParams.toString()}`;
-        
-        // DEBUG: Copy this URL from your console and paste it into a browser to see if it works
-
-        // 2. Execute Fetch with User-Agent
-        const response = await fetch(url, {
-            method: 'GET',
+        // 1. Execute Axios Request
+        // Axios natively handles URL parameter serialization and URL encoding via the 'params' object
+        const response = await axios.get(`${BASE_URL}/APIDatabundleV1.asp`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY,
+                MobileNetwork: networkCode,
+                DataPlan: String(dataPlanId).trim(),
+                MobileNumber: phoneNumber,
+                RequestID: requestId,
+                CallBackURL: process.env.CALLBACK_URL || ''
+            },
             headers: {
-                // Some providers return "Invalid Plan" if they detect a bot without a User-Agent
+                // Nellobyte requires a User-Agent to bypass bot-detection blocks
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+            },
+            timeout: 15000 
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP Error: ${response.status}`);
-        }
+        const data = response.data;
 
-        const data = await response.json();
-
-        // 3. Handle Provider Response
+        // 2. Handle Provider Response (Business Logic level)
+        // Nigerian VTU APIs often return HTTP 200 OK even when a transaction fails, 
+        // so we must check the internal statuscode payload.
         if (data.statuscode === "100" || data.status === "ORDER_RECEIVED") {
             return {
                 success: true,
@@ -110,13 +104,20 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
             };
         }
 
-        // Logic Check: If the provider returns an error, throw the exact message
-        const errorMessage = data.status || data.response_description || "Invalid data plan or request failed";
-        throw new Error(errorMessage);
+        // Logic Check: Provider returned 200 OK but business logic failed (e.g., Insufficient balance on provider side)
+        const errorMessage = data.response_description || data.status || "Invalid data plan or request failed";
+        throw new Error(`Provider Error: ${errorMessage}`);
 
     } catch (error) {
-        console.error("Nellobyte Data Error:", error.message);
-        throw new Error(error.message || "External Provider Error");
+        // 3. Robust Error Handling
+        // Handle Axios HTTP errors (4xx, 5xx) vs standard JS errors (e.g., Network timeout)
+        const isAxiosHttpError = error.response && error.response.data;
+        const errorDetail = isAxiosHttpError 
+            ? (error.response.data.response_description || error.response.data.status || `HTTP ${error.response.status}`)
+            : error.message;
+
+        console.error(`[Nellobyte] buyData Error for Ref ${requestId}:`, errorDetail);
+        throw new Error(`Data purchase failed: ${errorDetail}`);
     }
 };
 
@@ -135,7 +136,9 @@ const queryTransaction = async (orderId) => {
         });
         return response.data;
     } catch (error) {
-        throw new Error("Query failed");
+        // Improve debugging by logging the actual Axios message
+        console.error(`[Nellobyte] queryTransaction Error for Order ${orderId}:`, error.message);
+        throw new Error("Transaction query failed");
     }
 };
 
@@ -154,7 +157,8 @@ const cancelTransaction = async (orderId) => {
         });
         return response.data;
     } catch (error) {
-        throw new Error("Cancellation failed");
+        console.error(`[Nellobyte] cancelTransaction Error for Order ${orderId}:`, error.message);
+        throw new Error("Transaction cancellation failed");
     }
 };
 

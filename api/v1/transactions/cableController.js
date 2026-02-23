@@ -126,7 +126,7 @@ const purchaseSubscription = async (req, res) => {
         // 1. Fetch live packages to get current price (Verification of cost)
         const allPackages = await cableProvider.fetchPackages();
         const providerKey = cableTV.toUpperCase();
-        const packageList = allPackages?.TV_PACKAGE?.[providerKey] || [];
+        const packageList = allPackages?.TV_ID?.[providerKey] || [];
         
         const selectedPackage = packageList.find(p => p.PRODUCT_CODE === packageCode);
 

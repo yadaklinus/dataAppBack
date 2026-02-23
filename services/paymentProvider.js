@@ -53,7 +53,6 @@ const verifyTransaction = async (tx_ref) => {
         // Using axios directly or via your requestWithRetry wrapper
         const response = await axios(config);
         
-        console.log(response)
         /**
          * Axios wraps the response body in .data
          * Flutterwave's response structure is { status: "success", data: [...] }
