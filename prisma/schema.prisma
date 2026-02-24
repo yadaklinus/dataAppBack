@@ -5,13 +5,14 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
   provider = "postgresql"
 }
+
 // --- USER MANAGEMENT ---
 
 enum UserTier {
@@ -21,37 +22,54 @@ enum UserTier {
 }
 
 model User {
-  id              String        @id @default(uuid())
-  fullName        String?
-  email           String        @unique
-  phoneNumber     String        @unique
-  passwordHash    String
-  tier            UserTier      @default(SMART_USER)
-  isKycVerified   Boolean       @default(false)
-  
+  id            String   @id @default(uuid())
+  fullName      String?
+  email         String   @unique
+  phoneNumber   String   @unique
+  passwordHash  String
+  tier          UserTier @default(SMART_USER)
+  isKycVerified Boolean  @default(false)
+
+  // Security Fields
+  failedLoginAttempts Int       @default(0)
+  lockoutUntil        DateTime?
+
   // Relationships
-  wallet          Wallet?       // Moved balance here
-  kycData         KycData?
-  transactions    Transaction[]
-  
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  wallet        Wallet? // Moved balance here
+  kycData       KycData?
+  transactions  Transaction[]
+  refreshTokens RefreshToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([email, phoneNumber])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // --- WALLET MANAGEMENT ---
 
 model Wallet {
-  id              String   @id @default(uuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  balance         Decimal  @default(0.00) @db.Decimal(15, 2)
-  bonusBalance    Decimal  @default(0.00) @db.Decimal(15, 2) // For commissions
-  totalSpent      Decimal  @default(0.00) @db.Decimal(15, 2)
-  
-  updatedAt       DateTime @updatedAt
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  balance      Decimal @default(0.00) @db.Decimal(15, 2)
+  bonusBalance Decimal @default(0.00) @db.Decimal(15, 2) // For commissions
+  totalSpent   Decimal @default(0.00) @db.Decimal(15, 2)
+
+  updatedAt DateTime @updatedAt
 }
 
 // --- KYC & VIRTUAL ACCOUNTS ---
@@ -63,20 +81,20 @@ enum KycStatus {
 }
 
 model KycData {
-  id                    String    @id @default(uuid())
-  userId                String    @unique
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  encryptedBvn          String?   // Renamed for clarity
-  
-  virtualAccountNumber  String?   @unique
-  bankName              String?
-  accountReference      String?   @unique 
-  
-  status                KycStatus @default(PENDING)
-  verifiedAt            DateTime?
-  
-  updatedAt             DateTime  @updatedAt
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  encryptedBvn String? // Renamed for clarity
+
+  virtualAccountNumber String? @unique
+  bankName             String?
+  accountReference     String? @unique
+
+  status     KycStatus @default(PENDING)
+  verifiedAt DateTime?
+
+  updatedAt DateTime @updatedAt
 }
 
 // --- UNIFIED TRANSACTIONS ---
@@ -84,7 +102,7 @@ model KycData {
 enum TransactionType {
   DATA
   AIRTIME
-  RECHARGE_PIN 
+  RECHARGE_PIN
   CABLE_TV
   ELECTRICITY
   WALLET_FUNDING
@@ -99,25 +117,25 @@ enum TransactionStatus {
 }
 
 model Transaction {
-  id                String            @id @default(uuid())
-  userId            String
-  user              User              @relation(fields: [userId], references: [id])
-  
-  amount            Decimal           @db.Decimal(15, 2)
-  fee               Decimal           @default(0.00) @db.Decimal(15, 2)
-  type              TransactionType
-  status            TransactionStatus @default(PENDING)
-  
-  reference         String            @unique 
-  providerReference String?           @unique 
-  
-  metadata          Json?             
-  
-  printedPins       RechargePin[]
-  
-  createdAt         DateTime          @default(now())
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  @@index([userId, status, type])
+  amount Decimal           @db.Decimal(15, 2)
+  fee    Decimal           @default(0.00) @db.Decimal(15, 2)
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
+
+  reference         String  @unique
+  providerReference String? @unique
+
+  metadata Json?
+
+  printedPins RechargePin[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, status, type, createdAt])
 }
 
 // --- INVENTORY FOR CARD PRINTING ---
@@ -130,21 +148,21 @@ enum Network {
 }
 
 model RechargePin {
-  id             String       @id @default(uuid())
-  transactionId  String?
-  transaction    Transaction? @relation(fields: [transactionId], references: [id])
-  
-  network        Network
-  denomination   Int          
-  
-  pinCode        String       
-  serialNumber   String?
-  batchNumber    String?
-  
-  isSold         Boolean      @default(false)
-  
-  createdAt      DateTime     @default(now())
-  soldAt         DateTime?
+  id            String       @id @default(uuid())
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  network      Network
+  denomination Int
+
+  pinCode      String
+  serialNumber String?
+  batchNumber  String?
+
+  isSold Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  soldAt    DateTime?
 
   @@index([network, denomination, isSold])
 }

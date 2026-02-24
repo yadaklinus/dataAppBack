@@ -50,8 +50,7 @@ const buyEpin = async (network, value, quantity, requestId) => {
                 Quantity: quantity,
                 RequestID: requestId,
                 CallBackURL: process.env.CALLBACK_URL
-            },
-            timeout: 15000,  
+            }
         });
 
         // Nellobyte returns an array TXN_EPIN on success
@@ -69,22 +68,21 @@ const buyEpin = async (network, value, quantity, requestId) => {
 
     } catch (error) {
         console.error("Nellobyte EPIN Error:", error.response?.data || error.message);
-        throw new Error(error.message || "External Provider Error");
+        throw error;
     }
 };
 
 /**
  * Query EPIN status by OrderID or RequestID
  */
-const queryEpinStatus = async (requestId) => {
+const queryTransaction = async (requestId) => {
     try {
         const response = await axios.get(`${BASE_URL}/APIQueryV1.asp`, {
             params: {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 RequestID: requestId
-            },
-            timeout: 15000,  
+            }
         });
         return response.data;
     } catch (error) {
@@ -92,7 +90,7 @@ const queryEpinStatus = async (requestId) => {
     }
 };
 
-module.exports = { 
-    buyEpin, 
-    queryEpinStatus
+module.exports = {
+    buyEpin,
+    queryTransaction
 };

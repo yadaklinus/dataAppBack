@@ -25,7 +25,9 @@ router.get('/data/:reference', dataController.getDataStatus);
  */
 router.post('/print', printingController.printPins);
 
+router.get('/pins', printingController.getPrintingOrders);
 /**
+ * 
  * @route   GET /api/vtu/print/:reference
  * @desc    Fetch pins for a specific printing transaction (for printing/display)
  */

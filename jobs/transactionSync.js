@@ -1,113 +1,141 @@
 const cron = require('node-cron');
 const prisma = require('@/lib/prisma');
 const paymentProvider = require('@/services/paymentProvider');
+const airtimeProvider = require('@/services/airtimeProvider');
+const dataProvider = require('@/services/dataProvider');
+const electricityProvider = require('@/services/electricityProvider');
+const cableProvider = require('@/services/cableProvider');
+const educationProvider = require('@/services/educationProvider');
+const pinProvider = require('@/services/pinProvider');
+
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 /**
+ * Provider Mapping for Service Transactions
+ */
+const PROVIDERS = {
+    [TransactionType.AIRTIME]: airtimeProvider,
+    [TransactionType.DATA]: dataProvider,
+    [TransactionType.ELECTRICITY]: electricityProvider,
+    [TransactionType.CABLE_TV]: cableProvider,
+    [TransactionType.EDUCATION]: educationProvider,
+    [TransactionType.RECHARGE_PIN]: pinProvider
+};
+
+/**
  * Background Sync Job
- * Runs every minute to recover "lost" webhooks.
- * Enhanced with debugging logs to track verification steps.
+ * Runs every minute to recover "lost" webhooks or handle timeouts.
  */
 const startTransactionSync = () => {
-    cron.schedule('*/1 * * * *', async () => {
+    cron.schedule('*/2 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
-        
-        console.log(`\n--- [Sync Job Debug: ${now.toISOString()}] ---`);
-        console.log(`[Check] Looking for PENDING transactions created before: ${twoMinutesAgo.toISOString()}`);
+
+        console.log(`\n--- [Unified Sync Job: ${now.toISOString()}] ---`);
 
         try {
-            // 1. Fetch pending records
+            // 1. Fetch ALL pending records older than 2 minutes
             const pendingTransactions = await prisma.transaction.findMany({
                 where: {
-                    type: TransactionType.WALLET_FUNDING,
                     status: TransactionStatus.PENDING,
                     createdAt: { lt: twoMinutesAgo }
                 },
-                take: 15 
+                take: 20
             });
 
             console.log(`[Result] Found ${pendingTransactions.length} stuck transaction(s) to verify.`);
 
-            if (pendingTransactions.length === 0) return;
-
             for (const txn of pendingTransactions) {
-                console.log(`\n[Process] Verifying Ref: ${txn.reference}`);
-                
                 try {
-                    // 2. Query Flutterwave API
-                    const verification = await paymentProvider.verifyTransaction(txn.reference);
-
-                    if (!verification) {
-                        console.log(`[Verify] ⚠️ No response from Provider for Ref: ${txn.reference}`);
-                        continue;
+                    // --- CASE A: WALLET FUNDING (Flutterwave) ---
+                    if (txn.type === TransactionType.WALLET_FUNDING) {
+                        await reconcileFunding(txn);
                     }
-
-                    console.log(`[Verify] Provider Status: ${verification.status} | Amount: ${verification.amount} ${verification.currency}`);
-
-                    // 3. Logic Check
-                    if (verification.status === "successful") {
-                        const principalToCredit = Number(txn.amount);
-                        const userId = txn.userId;
-                        const flwId = String(verification.id);
-
-                        console.log(`[Action] Attempting recovery for User: ${userId} | Credit: ₦${principalToCredit}`);
-
-                        // 4. Atomic Update
-                        await prisma.$transaction(async (tx) => {
-                            const currentTx = await tx.transaction.findUnique({
-                                where: { id: txn.id }
-                            });
-
-                            // Check if status changed while we were processing
-                            if (!currentTx || currentTx.status !== TransactionStatus.PENDING) {
-                                console.log(`[Abort] Ref: ${txn.reference} is no longer PENDING in DB. Already processed?`);
-                                return;
-                            }
-
-                            // Update Wallet (Upsert for safety)
-                            await tx.wallet.upsert({
-                                where: { userId },
-                                update: { balance: { increment: principalToCredit } },
-                                create: { userId: userId, balance: principalToCredit }
-                            });
-
-                            // Update Transaction
-                            await tx.transaction.update({
-                                where: { id: txn.id },
-                                data: { 
-                                    status: TransactionStatus.SUCCESS,
-                                    providerReference: flwId
-                                }
-                            });
-                        });
-
-                        console.log(`[Success] ✅ Recovered: Ref ${txn.reference} | Wallet updated.`);
-                    } 
-                    else if (verification.status === "failed") {
-                        console.log(`[Update] ❌ Provider marked Ref: ${txn.reference} as FAILED. Updating DB...`);
-                        await prisma.transaction.update({
-                            where: { id: txn.id },
-                            data: { status: TransactionStatus.FAILED }
-                        });
-                    } else {
-                        console.log(`[Skip] ⏳ Ref: ${txn.reference} is still ${verification.status} at Provider.`);
+                    // --- CASE B: SERVICES (Airtime, Data, etc) ---
+                    else if (PROVIDERS[txn.type]) {
+                        await reconcileService(txn);
                     }
                 } catch (err) {
-                    // If 404, the user likely never even reached the payment page after the link was generated
-                    const isNotFound = err.message?.includes('404') || err.response?.status === 404;
-                    if (isNotFound) {
-                        console.log(`[Info] Ref: ${txn.reference} not found on Provider (User likely abandoned checkout).`);
-                    } else {
-                        console.error(`[Error] Failed verifying Ref: ${txn.reference}:`, err.message);
-                    }
+                    console.error(`[Error] Failed reconciling Ref ${txn.reference}:`, err.message);
                 }
             }
-            console.log(`--- [Sync Job Finished] ---\n`);
         } catch (error) {
             console.error('[Sync Job] Critical System Error:', error.message);
         }
     });
+};
+
+/**
+ * Reconcile Flutterwave Funding
+ */
+const reconcileFunding = async (txn) => {
+    console.log(`[Reconcile] Funding Ref: ${txn.reference}`);
+    const verification = await paymentProvider.verifyTransaction(txn.reference);
+
+    if (verification?.status === "successful") {
+        await prisma.$transaction(async (tx) => {
+            const currentTx = await tx.transaction.findUnique({ where: { id: txn.id } });
+            if (!currentTx || currentTx.status !== TransactionStatus.PENDING) return;
+
+            await tx.wallet.upsert({
+                where: { userId: txn.userId },
+                update: { balance: { increment: txn.amount } },
+                create: { userId: txn.userId, balance: txn.amount }
+            });
+
+            await tx.transaction.update({
+                where: { id: txn.id },
+                data: {
+                    status: TransactionStatus.SUCCESS,
+                    providerReference: String(verification.id)
+                }
+            });
+        });
+        console.log(`[Success] ✅ Recovered Funding Ref: ${txn.reference}`);
+    } else if (verification?.status === "failed") {
+        await prisma.transaction.update({
+            where: { id: txn.id },
+            data: { status: TransactionStatus.FAILED }
+        });
+    }
+};
+
+/**
+ * Reconcile Service Transactions (Airtime, Data, etc)
+ */
+const reconcileService = async (txn) => {
+    console.log(`[Reconcile] ${txn.type} Ref: ${txn.reference}`);
+    const provider = PROVIDERS[txn.type];
+
+    // We try to query by providerReference first, else fallback to internal reference
+    const queryId = txn.providerReference || txn.reference;
+    const result = await provider.queryTransaction(queryId);
+
+    // Business Logic: statuscode 200 is success in Nellobyte Query API
+    if (result.statuscode === "200") {
+        await prisma.transaction.update({
+            where: { id: txn.id },
+            data: { status: TransactionStatus.SUCCESS }
+        });
+        console.log(`[Success] ✅ Finalized ${txn.type} Ref: ${txn.reference}`);
+    }
+    else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(result.status)) {
+        console.log(`[Failure] ❌ Provider failed ${txn.type} Ref: ${txn.reference}. Triggering REFUND.`);
+
+        await prisma.$transaction([
+            prisma.transaction.update({
+                where: { id: txn.id },
+                data: { status: TransactionStatus.FAILED }
+            }),
+            prisma.wallet.update({
+                where: { userId: txn.userId },
+                data: {
+                    balance: { increment: txn.amount },
+                    totalSpent: { decrement: txn.amount }
+                }
+            })
+        ]);
+    }
 };
 
 module.exports = { startTransactionSync };

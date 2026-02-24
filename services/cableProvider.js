@@ -48,7 +48,7 @@ const fetchPackages = async () => {
  */
 const subscribe = async (params) => {
     const { cableTV, packageCode, smartCardNo, phoneNo, requestId } = params;
-    
+
     try {
         const response = await axios.get(`${BASE_URL}/APICableTVV1.asp`, {
             params: {
@@ -74,8 +74,26 @@ const subscribe = async (params) => {
         throw new Error(response.data.status || "Cable TV subscription failed");
     } catch (error) {
         console.error("Nellobyte Cable Error:", error.message);
-        throw new Error(error.message || "External Provider Error");
+        throw error;
     }
 };
 
-module.exports = { verifySmartCard, subscribe, fetchPackages };
+/**
+ * Query Transaction status
+ */
+const queryTransaction = async (orderId) => {
+    try {
+        const response = await axios.get(`${BASE_URL}/APIQueryV1.asp`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY,
+                OrderID: orderId
+            }
+        });
+        return response.data;
+    } catch (error) {
+        throw new Error("Transaction query failed");
+    }
+};
+
+module.exports = { verifySmartCard, subscribe, fetchPackages, queryTransaction };

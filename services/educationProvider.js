@@ -1,185 +1,104 @@
-const { z } = require('zod');
-const prisma = require('@/lib/prisma');
-const eduProvider = require('@/services/educationProvider');
-const { TransactionStatus, TransactionType } = require('@prisma/client');
-const { generateRef } = require('@/lib/crypto');
+const axios = require('@/lib/providerClient');
 
-// --- SCHEMAS ---
+const USER_ID = process.env.NELLOBYTE_USER_ID;
+const API_KEY = process.env.NELLOBYTE_API_KEY;
+const BASE_URL = 'https://www.nellobytesystems.com';
 
-const verifyJambSchema = z.object({
-    profileId: z.string().length(10, "JAMB Profile ID must be exactly 10 digits")
-});
-
-// FIX: Removed 'amount' entirely. The client has no say in the pricing.
-const purchasePinSchema = z.object({
-    provider: z.enum(["WAEC", "JAMB"], {
-        errorMap: () => ({ message: "Provider must be either WAEC or JAMB" })
-    }),
-    examType: z.string().min(1, "Exam type is required"), // This maps to PRODUCT_CODE
-    phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
-    profileId: z.string().optional()
-}).refine((data) => {
-    if (data.provider === 'JAMB' && !data.profileId) return false;
-    return true;
-}, {
-    message: "JAMB Profile ID is required for JAMB purchases",
-    path: ["profileId"]
-});
-
-const formatZodError = (error) => {
-    if (!error || !error.issues) return "Validation failed";
-    return error.issues.map(err => err.message).join(", ");
-};
-
-const verifyJamb = async (req, res) => {
-    const validation = verifyJambSchema.safeParse(req.query);
-
-    if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
-        });
-    }
-
-    const { profileId } = validation.data;
-
+/**
+ * Fetch Available Packages (WAEC or JAMB)
+ */
+const fetchPackages = async (type = 'WAEC') => {
     try {
-        const result = await eduProvider.verifyJambProfile(profileId);
-        return res.status(200).json({ status: "OK", data: result });
+        const endpoint = type === 'WAEC' ? 'APIWAECPackagesV2.asp' : 'APIJAMBPackagesV2.asp';
+        const response = await axios.get(`${BASE_URL}/${endpoint}`, {
+            params: { UserID: USER_ID }
+        });
+        return response.data;
     } catch (error) {
-        return res.status(400).json({ status: "ERROR", message: error.message });
+        console.error(`Failed to fetch ${type} packages:`, error.message);
+        return null;
     }
 };
-
-const purchasePin = async (req, res) => {
-    const validation = purchasePinSchema.safeParse(req.body);
-
-    if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
-        });
-    }
-
-    const { provider, examType, phoneNo, profileId } = validation.data;
-    const userId = req.user.id;
-
+/**
+ * Verify JAMB Profile ID
+ */
+const verifyJambProfile = async (profileId) => {
     try {
-        // 1. Fetch Authoritative Pricing from Provider
-        const packageData = await eduProvider.fetchPackages(provider);
-        const availablePackages = packageData.EXAM_TYPE || [];
-        
-        // Match the requested examType with the provider's PRODUCT_CODE
-        const selectedPkg = availablePackages.find(p => p.PRODUCT_CODE === examType);
-
-        if (!selectedPkg) {
-            return res.status(404).json({
-                status: "ERROR",
-                message: `Invalid package selected for ${provider}.`
-            });
-        }
-
-        // Server sets the absolute truth for the cost. 
-        // Note: Add your platform markup fee here if you want to make a profit!
-        // Example: const pinCost = Number(selectedPkg.PRODUCT_AMOUNT) + 150;
-        const pinCost = Number(selectedPkg.PRODUCT_AMOUNT);
-
-        // 2. Database Atomic Operation
-        const result = await prisma.$transaction(async (tx) => {
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
-            if (!wallet || Number(wallet.balance) < pinCost) {
-                throw new Error("Insufficient wallet balance");
+        const response = await axios.get(`${BASE_URL}/APIVerifyJAMBV1.asp`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY,
+                ExamType: 'jamb',
+                ProfileID: profileId
             }
-
-            const requestId = generateRef("EDU");
-            const transaction = await tx.transaction.create({
-                data: {
-                    userId,
-                    amount: pinCost,
-                    type: TransactionType.EDUCATION, 
-                    status: TransactionStatus.PENDING,
-                    reference: requestId,
-                    metadata: {
-                        provider,
-                        examType,
-                        recipient: phoneNo,
-                        profileId: profileId || null
-                    }
-                }
-            });
-
-            await tx.wallet.update({
-                where: { userId },
-                data: { 
-                    balance: { decrement: pinCost },
-                    totalSpent: { increment: pinCost }
-                }
-            });
-
-            return { transaction, requestId };
         });
 
-        // 3. Call External Provider
-        try {
-            const providerResponse = await eduProvider.buyPin(
-                provider.toUpperCase(),
-                examType,
-                phoneNo,
-                result.requestId
-            );
-
-            // 4. Finalize Transaction with PIN Details
-            await prisma.transaction.update({
-                where: { id: result.transaction.id },
-                data: {
-                    status: TransactionStatus.SUCCESS,
-                    providerReference: providerResponse.orderId,
-                    metadata: {
-                        ...result.transaction.metadata,
-                        cardDetails: providerResponse.cardDetails 
-                    }
-                }
-            });
-
-            return res.status(200).json({
-                status: "OK",
-                message: `${provider} PIN purchase successful`,
-                data: {
-                    cardDetails: providerResponse.cardDetails,
-                    transactionId: result.requestId
-                }
-            });
-
-        } catch (apiError) {
-            // 5. AUTO-REFUND
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: { 
-                        balance: { increment: pinCost },
-                        totalSpent: { decrement: pinCost }
-                    }
-                })
-            ]);
-
-            return res.status(502).json({
-                status: "ERROR",
-                message: apiError.message || "Provider error. Wallet refunded."
-            });
+        if (response.data.customer_name === "INVALID_ACCOUNTNO") {
+            throw new Error("Invalid JAMB Profile ID.");
         }
 
+        return response.data; // { customer_name: "..." }
     } catch (error) {
-        console.error("Education PIN Error:", error.message);
-        return res.status(error.message === "Insufficient wallet balance" ? 402 : 500).json({
-            status: "ERROR",
-            message: error.message || "Internal server error"
-        });
+        throw new Error(error.message || "JAMB verification failed");
     }
 };
 
-module.exports = { verifyJamb, purchasePin };
+/**
+ * Purchase Education PIN (WAEC or JAMB)
+ */
+const buyPin = async (provider, examType, phoneNo, requestId) => {
+    try {
+        // provider: 'WAEC' or 'JAMB'
+        const endpoint = provider === 'WAEC' ? 'APIWAECV1.asp' : 'APIJAMBV1.asp';
+
+        const response = await axios.get(`${BASE_URL}/${endpoint}`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY,
+                ExamType: examType,
+                PhoneNo: phoneNo,
+                RequestID: requestId,
+                CallBackURL: process.env.CALLBACK_URL
+            }
+        });
+
+        // 100/200 are success/received codes for Nellobyte Education API
+        const isSuccess = ["100", "200"].includes(String(response.data.statuscode)) ||
+            ["ORDER_RECEIVED", "ORDER_COMPLETED"].includes(response.data.status);
+
+        if (isSuccess) {
+            return {
+                success: true,
+                orderId: response.data.orderid,
+                status: response.data.status,
+                cardDetails: response.data.carddetails || null, // PIN and Serial
+                amountCharged: response.data.amountcharged
+            };
+        }
+
+        throw new Error(response.data.status || response.data.remark || "PIN purchase failed");
+    } catch (error) {
+        console.error(`Nellobyte ${provider} Error:`, error.message);
+        throw error;
+    }
+};
+
+/**
+ * Query Transaction status
+ */
+const queryTransaction = async (orderId) => {
+    try {
+        const response = await axios.get(`${BASE_URL}/APIQueryV1.asp`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY,
+                OrderID: orderId
+            }
+        });
+        return response.data;
+    } catch (error) {
+        throw new Error("Transaction query failed");
+    }
+};
+
+module.exports = { fetchPackages, verifyJambProfile, buyPin, queryTransaction };

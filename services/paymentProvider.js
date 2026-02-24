@@ -1,14 +1,13 @@
-const axios = require('axios');
+const axios = require('@/lib/providerClient');
 
 const FLW_SECRET_KEY = process.env.FLW_SECRET_KEY;
 const FLW_BASE_URL = 'https://api.flutterwave.com/v3';
 
 const flwHeader = {
-    headers: { 
+    headers: {
         'Authorization': `Bearer ${FLW_SECRET_KEY}`,
         'Content-Type': 'application/json'
-    },
-    timeout: 15000 
+    }
 };
 
 /**
@@ -39,8 +38,8 @@ const verifyTransaction = async (tx_ref) => {
         method: 'GET',
         url: `${FLW_BASE_URL}/transactions/verify_by_reference`,
         // Axios handles query string serialization automatically
-        params: { 
-            tx_ref: String(tx_ref).trim() 
+        params: {
+            tx_ref: String(tx_ref).trim()
         },
         headers: {
             ...flwHeader.headers, // Spreading headers from your existing config
@@ -52,7 +51,7 @@ const verifyTransaction = async (tx_ref) => {
     try {
         // Using axios directly or via your requestWithRetry wrapper
         const response = await axios(config);
-        
+
         /**
          * Axios wraps the response body in .data
          * Flutterwave's response structure is { status: "success", data: [...] }
@@ -71,7 +70,7 @@ const verifyTransaction = async (tx_ref) => {
         const message = error.response?.data?.message || error.message;
 
         console.error(`[FLW Verify Error] Ref: ${tx_ref} | Status: ${status} | Msg: ${message}`);
-        
+
         // Re-throw so your Webhook or Sync Job can handle the failure (e.g., retry)
         throw error;
     }
@@ -113,7 +112,7 @@ const initializePayment = async (userId, amount, email, fullName) => {
 const createVirtualAccount = async (params) => {
     const { email, bvn, phoneNumber, fullName, userId } = params;
     const tx_ref = `VA-REG-${Date.now()}-${userId}`;
-    
+
     const config = {
         method: 'post',
         url: `${FLW_BASE_URL}/virtual-account-numbers`,
@@ -130,11 +129,11 @@ const createVirtualAccount = async (params) => {
     };
 
     const response = await requestWithRetry(config);
-    return response.data.data; 
+    return response.data.data;
 };
 
-module.exports = { 
-    initializePayment, 
-    createVirtualAccount, 
-    verifyTransaction 
+module.exports = {
+    initializePayment,
+    createVirtualAccount,
+    verifyTransaction
 };

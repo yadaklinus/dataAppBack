@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('@/lib/providerClient');
 
 /**
  * Nellobyte Systems Data Bundle Integration Service
@@ -36,7 +36,6 @@ const fetchAvailablePlans = async () => {
     try {
         const response = await axios.get(`${BASE_URL}/APIDatabundlePlansV2.asp`, {
             params: { UserID: USER_ID },
-            timeout: 15000,  
         });
 
         const data = response.data;
@@ -87,8 +86,7 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
             headers: {
                 // Nellobyte requires a User-Agent to bypass bot-detection blocks
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            },
-            timeout: 15000 
+            }
         });
 
         const data = response.data;
@@ -110,14 +108,9 @@ const buyData = async (network, dataPlanId, phoneNumber, requestId) => {
 
     } catch (error) {
         // 3. Robust Error Handling
-        // Handle Axios HTTP errors (4xx, 5xx) vs standard JS errors (e.g., Network timeout)
-        const isAxiosHttpError = error.response && error.response.data;
-        const errorDetail = isAxiosHttpError 
-            ? (error.response.data.response_description || error.response.data.status || `HTTP ${error.response.status}`)
-            : error.message;
-
-        console.error(`[Nellobyte] buyData Error for Ref ${requestId}:`, errorDetail);
-        throw new Error(`Data purchase failed: ${errorDetail}`);
+        // Pass original error so controller can detect Timeouts
+        console.error(`[Nellobyte] buyData Error for Ref ${requestId}:`, error.message);
+        throw error;
     }
 };
 
@@ -132,7 +125,7 @@ const queryTransaction = async (orderId) => {
                 APIKey: API_KEY,
                 OrderID: orderId
             },
-            timeout: 15000,  
+            timeout: 15000,
         });
         return response.data;
     } catch (error) {
@@ -153,7 +146,7 @@ const cancelTransaction = async (orderId) => {
                 APIKey: API_KEY,
                 OrderID: orderId
             },
-            timeout: 15000,  
+            timeout: 15000,
         });
         return response.data;
     } catch (error) {
@@ -162,10 +155,10 @@ const cancelTransaction = async (orderId) => {
     }
 };
 
-module.exports = { 
+module.exports = {
     fetchAvailablePlans,
-    buyData, 
-    queryTransaction, 
+    buyData,
+    queryTransaction,
     cancelTransaction,
     calculateMyPrice
 };

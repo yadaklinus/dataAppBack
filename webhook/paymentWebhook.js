@@ -8,23 +8,23 @@ const crypto = require('crypto');
  * based on the ₦40 / 2% / ₦2000 fee structure.
  */
 function safeCompare(a, b) {
-  try {
-    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-  } catch {
-    return false; // different lengths
-  }
+    try {
+        return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    } catch {
+        return false; // different lengths
+    }
 }
 
 const getWalletCreditAmount = (totalReceived) => {
     const total = Number(totalReceived);
-    
+
     // Safety check for very small amounts to avoid negative balances
     if (total <= 40) return 0;
 
     if (total <= 2540) {
         // Tier 1: Small amounts (Principal <= ₦2,500)
         return total - 40;
-    } else if (total > 102000) { 
+    } else if (total > 102000) {
         // Tier 3: Large amounts (Principal > ₦100,000)
         return total - 2000;
     } else {
@@ -46,18 +46,34 @@ const handleFlutterwaveWebhook = async (req, res) => {
     }
 
     const payload = req.body;
-    res.status(200).end(); // Always acknowledge 200 to FLW first to prevent unnecessary retries
 
-    if (payload.event !== 'charge.completed' || payload.status !== 'successful') return;
+    // Always acknowledge 200 to FLW first to prevent unnecessary retries and queue blocks
+    res.status(200).end();
+
+    // FLW sends different event keys depending on the API version and payment method.
+    // Standard cards use 'event', Bank transfers often use 'event.type'
+    const eventType = payload.event || payload['event.type'];
+    const validEvents = ['charge.completed', 'BANK_TRANSFER_TRANSACTION', 'transfer.completed'];
+
+    if (!validEvents.includes(eventType) || payload.status !== 'successful') {
+        console.log(`[Webhook] Ignored event: ${eventType} | Status: ${payload.status}`);
+        return;
+    }
 
     try {
+        // Handle both nested { data: {} } and flat payloads
         const data = payload.data || payload;
         const flwId = data.id;
-        const reference = data.tx_ref || data.txRef; 
-        const orderRef = data.order_ref || data.orderRef;
+
+        // Exact matching based on your payload
+        const reference = data.txRef || data.tx_ref;
+        const orderRef = data.orderRef || data.order_ref;
 
         // 1. Re-verify with Flutterwave API (Security against payload spoofing)
-        const verifiedData = await paymentProvider.verifyTransaction(flwId);
+        // NOTE: Make sure your `verifyTransaction` uses the Transaction ID (flwId), 
+        // as FLW v3 endpoints prefer ID over tx_ref for verification.
+        const verifiedData = await paymentProvider.verifyTransaction(reference);
+
         if (verifiedData.status !== "successful") {
             console.error(`[Webhook] Verification failed: Status is ${verifiedData.status}`);
             return;
@@ -83,14 +99,21 @@ const handleFlutterwaveWebhook = async (req, res) => {
             }
 
             userId = existingTx.userId;
-            walletCreditAmount = Number(existingTx.amount);
+
+            walletCreditAmount = getWalletCreditAmount(totalPaidByCustomer);
             isExistingTransaction = true;
-        } 
+        }
         // CASE B: Dedicated Virtual Account Transfer
         else if (reference && reference.startsWith('VA-REG-')) {
             const parts = reference.split('-');
-            userId = parts.slice(3).join('-'); 
+            userId = parts.slice(3).join('-');
             internalReference = `VA-IN-${flwId}`;
+
+            const kycRecord = await prisma.kycData.findFirst({
+                where: { accountReference: { contains: userId } }
+            });
+
+            if (!kycRecord) { console.error('[Webhook] Unknown VA reference'); return; }
             walletCreditAmount = getWalletCreditAmount(totalPaidByCustomer);
         }
         // CASE C: Fallback for orderRef
@@ -115,14 +138,13 @@ const handleFlutterwaveWebhook = async (req, res) => {
 
             if (isExistingTransaction) {
                 // UPDATE FLOW: For Gateway payments where the PENDING record already exists.
-                // updateMany acts as an atomic lock. It only updates if status is NOT SUCCESS.
                 const updateResult = await tx.transaction.updateMany({
-                    where: { 
+                    where: {
                         reference: internalReference,
-                        status: { not: TransactionStatus.SUCCESS } 
+                        status: { not: 'SUCCESS' } // Assuming TransactionStatus.SUCCESS equals 'SUCCESS'
                     },
                     data: {
-                        status: TransactionStatus.SUCCESS,
+                        status: 'SUCCESS',
                         providerReference: String(flwId),
                         fee: platformFee
                     }
@@ -130,12 +152,11 @@ const handleFlutterwaveWebhook = async (req, res) => {
 
                 if (updateResult.count === 0) {
                     console.log(`[Webhook] Duplicate Gateway webhook suppressed: ${flwId}`);
-                    return; // Another thread already updated this to SUCCESS
+                    return; // Another thread already updated this
                 }
                 isNewSuccess = true;
             } else {
                 // CREATE FLOW: For Virtual Accounts where no prior record exists.
-                // We rely on the DB's unique constraint on `providerReference` to prevent duplicates.
                 try {
                     await tx.transaction.create({
                         data: {
@@ -143,10 +164,10 @@ const handleFlutterwaveWebhook = async (req, res) => {
                             amount: walletCreditAmount,
                             fee: platformFee,
                             type: 'WALLET_FUNDING',
-                            status: TransactionStatus.SUCCESS,
+                            status: 'SUCCESS',
                             reference: internalReference,
                             providerReference: String(flwId), // Must be @unique in schema
-                            metadata: { 
+                            metadata: {
                                 totalCharged: totalPaidByCustomer,
                                 method: data.payment_type || 'transfer',
                                 originalRef: reference
@@ -159,7 +180,7 @@ const handleFlutterwaveWebhook = async (req, res) => {
                         console.log(`[Webhook] Duplicate Virtual Account webhook suppressed: ${flwId}`);
                         return; // Another thread already inserted this record
                     }
-                    throw e; // Throw unexpected errors so the transaction rolls back
+                    throw e;
                 }
             }
 

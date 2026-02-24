@@ -1,34 +1,36 @@
+const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const prisma = require('@/lib/prisma');
 const SALT_ROUNDS = 12;
-const validator = require('validator');
 
+const registerSchema = z.object({
+    userName: z.string().min(3, "Username must be at least 3 characters long").max(50),
+    email: z.string().email("Invalid email format").toLowerCase().trim(),
+    phoneNumber: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
+    password: z.string()
+        .min(8, "Password must be at least 8 characters long")
+        .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+        .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+        .regex(/[0-9]/, "Password must contain at least one number")
+        .regex(/[^a-zA-Z0-9]/, "Password must contain at least one special character")
+});
+
+const formatZodError = (error) => {
+    return error.issues.map(err => err.message).join(", ");
+};
 
 const register = async (req, res) => {
     try {
-        const { userName, password, phoneNumber } = req.body;
-        const email = req.body.email.toLowerCase().trim();
+        const validation = registerSchema.safeParse(req.body);
 
-        // 1. Basic Validation
-        if (!email || !password || !phoneNumber) {
-            return res.status(400).json({ 
-                status: "ERROR", 
-                message: "Email, password, and phone number are required" 
-            });
-        }
-
-        if (!password || password.length < 8) {
+        if (!validation.success) {
             return res.status(400).json({
                 status: "ERROR",
-                message: "Password must be at least 8 characters long"
+                message: formatZodError(validation.error)
             });
         }
 
-        if (!validator.isEmail(email)) {
-            return res.status(400).json({ status:"ERROR", message:"Invalid email format" });
-        }
-
-
+        const { userName, email, phoneNumber, password } = validation.data;
 
         // 2. Uniqueness Check (Email and Phone)
         const existingUser = await prisma.user.findFirst({
@@ -38,9 +40,9 @@ const register = async (req, res) => {
         });
 
         if (existingUser) {
-            return res.status(409).json({ 
-                status: "ERROR", 
-                message: "A user with this email or phone number already exists" 
+            return res.status(409).json({
+                status: "ERROR",
+                message: "A user with this email or phone number already exists"
             });
         }
 
@@ -48,14 +50,12 @@ const register = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
         // 4. Atomic Database Creation
-        // We initialize the Wallet (for balance) and KycData (for future Virtual Account)
         const newUser = await prisma.user.create({
             data: {
                 fullName: userName,
                 email,
                 phoneNumber,
                 passwordHash: hashedPassword,
-                // Every user gets a wallet regardless of verification
                 wallet: {
                     create: {
                         balance: 0.00,
@@ -63,11 +63,9 @@ const register = async (req, res) => {
                         totalSpent: 0.00
                     }
                 },
-                // KycData stores the Virtual Account details once verified
                 kycData: {
                     create: {
                         status: 'PENDING',
-                        // These will be populated after BVN/NIN verification
                         virtualAccountNumber: null,
                         bankName: null,
                         accountReference: null
@@ -97,9 +95,9 @@ const register = async (req, res) => {
 
     } catch (error) {
         console.error("Registration Error:", error);
-        res.status(500).json({ 
-            status: "ERROR", 
-            message: "An internal error occurred during registration" 
+        res.status(500).json({
+            status: "ERROR",
+            message: "An internal error occurred during registration"
         });
     }
 }

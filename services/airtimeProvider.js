@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('@/lib/providerClient');
 
 /**
  * Nellobyte Systems Airtime Integration Service
@@ -42,8 +42,7 @@ const buyAirtime = async (network, amount, phoneNumber, requestId) => {
                 MobileNumber: phoneNumber,
                 RequestID: requestId,
                 CallBackURL: process.env.CALLBACK_URL // Ensure this is set in .env
-            },
-            timeout: 15000,  
+            }
         });
 
         // Nellobyte returns statuscode "100" for ORDER_RECEIVED
@@ -58,7 +57,7 @@ const buyAirtime = async (network, amount, phoneNumber, requestId) => {
         throw new Error(response.data.status || "Airtime request failed");
     } catch (error) {
         console.error("Nellobyte Airtime Error:", error.response?.data || error.message);
-        throw new Error(error.message || "External Provider Error");
+        throw error;
     }
 };
 
@@ -72,8 +71,7 @@ const queryTransaction = async (orderId) => {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 OrderID: orderId
-            },
-            timeout: 15000,  
+            }
         });
 
         return response.data;
@@ -92,8 +90,7 @@ const cancelTransaction = async (orderId) => {
                 UserID: USER_ID,
                 APIKey: API_KEY,
                 OrderID: orderId
-            },
-            timeout: 15000,  
+            }
         });
 
         return response.data;
@@ -102,8 +99,8 @@ const cancelTransaction = async (orderId) => {
     }
 };
 
-module.exports = { 
-    buyAirtime, 
-    queryTransaction, 
-    cancelTransaction 
+module.exports = {
+    buyAirtime,
+    queryTransaction,
+    cancelTransaction
 };

@@ -2,23 +2,30 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const eduProvider = require('@/services/educationProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-const { generateRef } = require('@/lib/crypto')
+const { generateRef } = require('@/lib/crypto');
+const { isNetworkError } = require('@/lib/financialSafety');
+
 // --- SCHEMAS ---
 
-const verifyJambSchema = z.object({
-    profileId: z.string().min(10, "JAMB Profile ID is usually 10 digits").max(10, "JAMB Profile ID is usually 10 digits")
+const getPackagesSchema = z.object({
+    provider: z.enum(["WAEC", "JAMB"], {
+        errorMap: () => ({ message: "Provider must be either WAEC or JAMB" })
+    })
 });
 
+const verifyJambSchema = z.object({
+    profileId: z.string().length(10, "JAMB Profile ID must be exactly 10 digits")
+});
+
+// FIX: Removed 'amount' entirely. The client has no say in the pricing.
 const purchasePinSchema = z.object({
     provider: z.enum(["WAEC", "JAMB"], {
         errorMap: () => ({ message: "Provider must be either WAEC or JAMB" })
     }),
-    examType: z.string().min(1, "Exam type is required"),
+    examType: z.string().min(1, "Exam type is required"), // This maps to PRODUCT_CODE
     phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
-    amount: z.number().min(500, "Minimum PIN cost is ₦500"),
     profileId: z.string().optional()
 }).refine((data) => {
-    // If provider is JAMB, profileId MUST be present
     if (data.provider === 'JAMB' && !data.profileId) return false;
     return true;
 }, {
@@ -26,24 +33,38 @@ const purchasePinSchema = z.object({
     path: ["profileId"]
 });
 
-/**
- * Helper: Format Zod errors into a readable string
- */
 const formatZodError = (error) => {
     if (!error || !error.issues) return "Validation failed";
     return error.issues.map(err => err.message).join(", ");
 };
 
-/**
- * Verify JAMB Profile ID
- */
+const getPackages = async (req, res) => {
+    const validation = getPackagesSchema.safeParse(req.query);
+
+    if (!validation.success) {
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
+        });
+    }
+
+    const { provider } = validation.data;
+
+    try {
+        const result = await eduProvider.fetchPackages(provider);
+        return res.status(200).json({ status: "OK", data: result });
+    } catch (error) {
+        return res.status(400).json({ status: "ERROR", message: error.message });
+    }
+};
+
 const verifyJamb = async (req, res) => {
     const validation = verifyJambSchema.safeParse(req.query);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
@@ -57,38 +78,53 @@ const verifyJamb = async (req, res) => {
     }
 };
 
-/**
- * Purchase WAEC or JAMB PIN
- */
 const purchasePin = async (req, res) => {
     const validation = purchasePinSchema.safeParse(req.body);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
-    const { provider, examType, phoneNo, amount, profileId } = validation.data;
+    const { provider, examType, phoneNo, profileId } = validation.data;
     const userId = req.user.id;
-    const pinCost = Number(amount);
 
     try {
-        // 1. Database Atomic Operation
+        // 1. Fetch Authoritative Pricing from Provider
+        const packageData = await eduProvider.fetchPackages(provider);
+        const availablePackages = packageData.EXAM_TYPE || [];
+
+        // Match the requested examType with the provider's PRODUCT_CODE
+        const selectedPkg = availablePackages.find(p => p.PRODUCT_CODE === examType);
+
+        if (!selectedPkg) {
+            return res.status(404).json({
+                status: "ERROR",
+                message: `Invalid package selected for ${provider}.`
+            });
+        }
+
+        // Server sets the absolute truth for the cost. 
+        // Note: Add your platform markup fee here if you want to make a profit!
+        // Example: const pinCost = Number(selectedPkg.PRODUCT_AMOUNT) + 150;
+        const pinCost = Number(selectedPkg.PRODUCT_AMOUNT);
+
+        // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
+
             if (!wallet || Number(wallet.balance) < pinCost) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("EDU")
+            const requestId = generateRef("EDU");
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
                     amount: pinCost,
-                    type: TransactionType.EDUCATION, 
+                    type: TransactionType.EDUCATION,
                     status: TransactionStatus.PENDING,
                     reference: requestId,
                     metadata: {
@@ -102,7 +138,7 @@ const purchasePin = async (req, res) => {
 
             await tx.wallet.update({
                 where: { userId },
-                data: { 
+                data: {
                     balance: { decrement: pinCost },
                     totalSpent: { increment: pinCost }
                 }
@@ -111,7 +147,7 @@ const purchasePin = async (req, res) => {
             return { transaction, requestId };
         });
 
-        // 2. Call External Provider
+        // 3. Call External Provider
         try {
             const providerResponse = await eduProvider.buyPin(
                 provider.toUpperCase(),
@@ -120,7 +156,7 @@ const purchasePin = async (req, res) => {
                 result.requestId
             );
 
-            // 3. Finalize Transaction with PIN Details
+            // 4. Finalize Transaction with PIN Details
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
@@ -128,7 +164,7 @@ const purchasePin = async (req, res) => {
                     providerReference: providerResponse.orderId,
                     metadata: {
                         ...result.transaction.metadata,
-                        cardDetails: providerResponse.cardDetails 
+                        cardDetails: providerResponse.cardDetails
                     }
                 }
             });
@@ -143,7 +179,17 @@ const purchasePin = async (req, res) => {
             });
 
         } catch (apiError) {
-            // 4. AUTO-REFUND
+            // 5. SMART AUTO-REFUND: Skip if it was just a timeout
+            if (isNetworkError(apiError)) {
+                console.warn(`[Financial Safety] Timeout for Ref: ${result.requestId}. Leaving PENDING.`);
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Connection delay with the board. Your PIN is being generated. Check your receipt shortly.",
+                    transactionId: result.requestId
+                });
+            }
+
+            // AUTO-REFUND
             await prisma.$transaction([
                 prisma.transaction.update({
                     where: { id: result.transaction.id },
@@ -151,7 +197,7 @@ const purchasePin = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { 
+                    data: {
                         balance: { increment: pinCost },
                         totalSpent: { decrement: pinCost }
                     }
@@ -173,4 +219,4 @@ const purchasePin = async (req, res) => {
     }
 };
 
-module.exports = { verifyJamb, purchasePin };
+module.exports = { verifyJamb, purchasePin, getPackages };

@@ -196,84 +196,12 @@ const getUserPins = async (req, res) => {
 /**
  * GET /transactions/:reference/pins
  */
-const getTransactionPins = async (req, res) => {
-    const { reference } = req.params;
 
-    try {
-        const transaction = await prisma.transaction.findUnique({
-            where: { reference },
-            include: {
-                printedPins: true
-            }
-        });
-
-        if (!transaction || transaction.userId !== req.user.id) {
-            return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
-        }
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                orderId: transaction.reference,
-                date: transaction.createdAt,
-                amount: transaction.amount,
-                quantity: transaction.metadata?.quantity || transaction.printedPins.length,
-                network: transaction.metadata?.network,
-                denomination: transaction.metadata?.faceValue,
-                pins: transaction.printedPins
-            }
-        });
-    } catch (error) {
-        return res.status(500).json({ status: "ERROR", message: "Error retrieving order pins" });
-    }
-};
-
-const getPrintingOrders = async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const page = Math.max(1, parseInt(req.query.page) || 1);
-        const limit = Math.min(100, parseInt(req.query.limit) || 20);
-        const skip = (page - 1) * limit;
-
-        const [orders, total] = await prisma.$transaction([
-            prisma.transaction.findMany({
-                where: {
-                    userId,
-                    type: 'RECHARGE_PIN'
-                },
-                include: {
-                    printedPins: true // This adds the actual pins to each transaction object
-                },
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: limit
-            }),
-            prisma.transaction.count({
-                where: { userId, type: 'RECHARGE_PIN' }
-            })
-        ]);
-
-        return res.status(200).json({
-            status: "OK",
-            data: orders,
-            pagination: {
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            }
-        });
-    } catch (error) {
-        console.error("Fetch Printing Orders Error:", error.message);
-        return res.status(500).json({ status: "ERROR", message: "Failed to fetch printing history" });
-    }
-};
 
 module.exports = { 
     getProfile, 
     getTransactions, 
     getDashboard, 
     getUserPins, 
-    getTransactionPins,
-    getPrintingOrders
+   
 };

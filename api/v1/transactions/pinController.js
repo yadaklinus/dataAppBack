@@ -3,6 +3,7 @@ const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
 const { generateRef } = require('@/lib/crypto')
+const { isNetworkError } = require('@/lib/financialSafety');
 
 /**
  * Handles the purchase and generation of Recharge Card PINs
@@ -10,14 +11,14 @@ const { generateRef } = require('@/lib/crypto')
  */
 
 const purchasePinSchema = z.object({
-        network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
-        value:  z.enum(['100','200','500']),
-        quantity: z.number().min(1).max(100),
+    network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
+    value: z.enum(['100', '200', '500']),
+    quantity: z.number().min(1).max(100),
 });
 const printPins = async (req, res) => {
     const parsed = purchasePinSchema.safeParse(req.body);
     if (!parsed.success) {
-        return res.status(400).json({ status:"ERROR", message: parsed.error.errors[0].message });
+        return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
     }
 
     const { network, value, quantity } = parsed.data;
@@ -32,17 +33,17 @@ const printPins = async (req, res) => {
     const totalCost = faceValue * qty;
 
     if (isNaN(qty) || qty < 1 || qty > 100) {
-        return res.status(400).json({ status:"ERROR", message:"Quantity must be between 1 and 100" });
+        return res.status(400).json({ status: "ERROR", message: "Quantity must be between 1 and 100" });
     }
     if (![100, 200, 500].includes(faceValue)) {
-        return res.status(400).json({ status:"ERROR", message:"Value must be 100, 200, or 500" });
+        return res.status(400).json({ status: "ERROR", message: "Value must be 100, 200, or 500" });
     }
 
 
     try {
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
+
             if (!wallet || Number(wallet.balance) < totalCost) {
                 throw new Error("Insufficient wallet balance");
             }
@@ -62,9 +63,9 @@ const printPins = async (req, res) => {
             // Update Wallet: Deduct Balance AND Increment TotalSpent
             await tx.wallet.update({
                 where: { userId },
-                data: { 
+                data: {
                     balance: { decrement: totalCost },
-                    totalSpent: { increment: totalCost } 
+                    totalSpent: { increment: totalCost }
                 }
             });
 
@@ -95,7 +96,16 @@ const printPins = async (req, res) => {
             return res.status(200).json({ status: "OK", message: "PINs generated successfully" });
 
         } catch (apiError) {
-            // AUTO-REFUND
+            // SMART AUTO-REFUND
+            if (isNetworkError(apiError)) {
+                console.warn(`[Financial Safety] Timeout for Ref: ${result.requestId}. Leaving PENDING.`);
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Process delayed. Your PINs are being generated. Please check your history in a moment.",
+                    transactionId: result.requestId
+                });
+            }
+
             await prisma.$transaction([
                 prisma.transaction.update({
                     where: { id: result.transaction.id },
@@ -103,9 +113,9 @@ const printPins = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { 
+                    data: {
                         balance: { increment: totalCost },
-                        totalSpent: { decrement: totalCost } 
+                        totalSpent: { decrement: totalCost }
                     }
                 })
             ]);
@@ -189,4 +199,6 @@ const getPrintingOrders = async (req, res) => {
     }
 };
 
-module.exports = { printPins, getTransactionPins,getPrintingOrders };
+
+
+module.exports = { printPins, getTransactionPins, getPrintingOrders };

@@ -4,11 +4,12 @@ const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkVal
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
 const { generateRef } = require('@/lib/crypto')
+const { isNetworkError } = require('@/lib/financialSafety');
 
 const purchaseDataSchema = z.object({
-        network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
-        planId:  z.string().min(1).max(20),
-        phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
+    network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
+    planId: z.string().min(1).max(20),
+    phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
 });
 /**
  * Fetch available plans (Selling Price only)
@@ -30,10 +31,10 @@ const getAvailablePlans = async (req, res) => {
  * Added: Phone number prefix validation to prevent cross-network errors.
  */
 const purchaseData = async (req, res) => {
-    
+
     const parsed = purchaseDataSchema.safeParse(req.body);
     if (!parsed.success) {
-        return res.status(400).json({ status:"ERROR", message: parsed.error.errors[0].message });
+        return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
     }
 
 
@@ -47,9 +48,9 @@ const purchaseData = async (req, res) => {
     // --- BUILDER ADDITION: PREFIX VALIDATION ---
     const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
     if (!isNetworkMatch) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.` 
+        return res.status(400).json({
+            status: "ERROR",
+            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
         });
     }
 
@@ -73,8 +74,8 @@ const purchaseData = async (req, res) => {
         const networkGroups = allPlans.MOBILE_NETWORK?.[networkKey] || [];
 
         for (const group of networkGroups) {
-            const found = group.PRODUCT.find(p => 
-                String(p.PRODUCT_CODE) === String(planId) || 
+            const found = group.PRODUCT.find(p =>
+                String(p.PRODUCT_CODE) === String(planId) ||
                 String(p.PRODUCT_ID) === String(planId)
             );
             if (found) {
@@ -84,8 +85,8 @@ const purchaseData = async (req, res) => {
         }
 
         if (!selectedPlan) {
-            return res.status(404).json({ 
-                status: "ERROR", 
+            return res.status(404).json({
+                status: "ERROR",
                 message: "Invalid data plan selected"
             });
         }
@@ -94,13 +95,13 @@ const purchaseData = async (req, res) => {
 
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
+
             if (!wallet || Number(wallet.balance) < sellingPrice) {
                 throw new Error("Insufficient wallet balance");
             }
 
             const requestId = generateRef("DAT")
-            
+
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -119,7 +120,7 @@ const purchaseData = async (req, res) => {
 
             await tx.wallet.update({
                 where: { userId },
-                data: { 
+                data: {
                     balance: { decrement: sellingPrice },
                     totalSpent: { increment: sellingPrice }
                 }
@@ -151,6 +152,15 @@ const purchaseData = async (req, res) => {
             });
 
         } catch (apiError) {
+            if (isNetworkError(apiError)) {
+                console.warn(`[Financial Safety] Timeout for Ref: ${result.requestId}. Leaving PENDING.`);
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Network delay. Your data bundle is being processed. check status shortly.",
+                    transactionId: result.requestId
+                });
+            }
+
             await prisma.$transaction([
                 prisma.transaction.update({
                     where: { id: result.transaction.id },
@@ -158,7 +168,7 @@ const purchaseData = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { 
+                    data: {
                         balance: { increment: sellingPrice },
                         totalSpent: { decrement: sellingPrice }
                     }
@@ -186,20 +196,20 @@ const getDataStatus = async (req, res) => {
             where: { reference },
             include: { user: { select: { id: true, fullName: true, email: true } } }
         });
-        
+
         if (!txn || txn.userId !== req.user.id) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
 
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {
                 const providerStatus = await dataProvider.queryTransaction(txn.providerReference);
-                
+
                 if (providerStatus.statuscode === "200") {
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
                         data: { status: TransactionStatus.SUCCESS },
                         include: { user: { select: { fullName: true, email: true } } }
                     });
-                } 
+                }
                 else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(providerStatus.status)) {
                     const updatedData = await prisma.$transaction([
                         prisma.transaction.update({
@@ -208,7 +218,7 @@ const getDataStatus = async (req, res) => {
                         }),
                         prisma.wallet.update({
                             where: { userId: txn.userId },
-                            data: { 
+                            data: {
                                 balance: { increment: txn.amount },
                                 totalSpent: { decrement: txn.amount }
                             }

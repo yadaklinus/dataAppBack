@@ -3,6 +3,7 @@ const prisma = require('@/lib/prisma');
 const electricityProvider = require('@/services/electricityProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef } = require('@/lib/crypto')
+const { isNetworkError } = require('@/lib/financialSafety');
 
 // --- SCHEMAS ---
 
@@ -33,9 +34,9 @@ const getDiscos = async (req, res) => {
     try {
         const data = await electricityProvider.fetchDiscos();
         if (!data || !data.ELECTRIC_COMPANY) {
-            return res.status(500).json({ 
-                status: "ERROR", 
-                message: "Could not fetch discos from provider" 
+            return res.status(500).json({
+                status: "ERROR",
+                message: "Could not fetch discos from provider"
             });
         }
 
@@ -70,11 +71,11 @@ const getDiscos = async (req, res) => {
 const verifyMeterNumber = async (req, res) => {
     // Validate Query Params
     const validation = verifyMeterSchema.safeParse(req.query);
-    
+
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
@@ -96,16 +97,16 @@ const purchaseElectricity = async (req, res) => {
     const validation = purchaseElectricitySchema.safeParse(req.body);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
     const { discoCode, meterNo, meterType, amount, phoneNo } = validation.data;
     const userId = req.user.id;
     const billAmount = Number(amount);
-    
+
     try {
         // 1. Double-check meter (Safety)
         const verification = await electricityProvider.verifyMeter(discoCode, meterNo, meterType);
@@ -113,7 +114,7 @@ const purchaseElectricity = async (req, res) => {
         // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
+
             if (!wallet || Number(wallet.balance) < billAmount) {
                 throw new Error("Insufficient wallet balance");
             }
@@ -138,7 +139,7 @@ const purchaseElectricity = async (req, res) => {
 
             await tx.wallet.update({
                 where: { userId },
-                data: { 
+                data: {
                     balance: { decrement: billAmount },
                     totalSpent: { increment: billAmount }
                 }
@@ -166,7 +167,7 @@ const purchaseElectricity = async (req, res) => {
                     providerReference: providerResponse.orderId,
                     metadata: {
                         ...result.transaction.metadata,
-                        token: providerResponse.token 
+                        token: providerResponse.token
                     }
                 }
             });
@@ -180,6 +181,15 @@ const purchaseElectricity = async (req, res) => {
             });
 
         } catch (apiError) {
+            if (isNetworkError(apiError)) {
+                console.warn(`[Financial Safety] Timeout for Ref: ${result.requestId}. Leaving PENDING.`);
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Process delayed due to network. Please check status history for your token.",
+                    transactionId: result.requestId
+                });
+            }
+
             // 5. AUTO-REFUND
             await prisma.$transaction([
                 prisma.transaction.update({
@@ -188,7 +198,7 @@ const purchaseElectricity = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { 
+                    data: {
                         balance: { increment: billAmount },
                         totalSpent: { decrement: billAmount }
                     }
@@ -210,4 +220,4 @@ const purchaseElectricity = async (req, res) => {
     }
 };
 
-module.exports = { verifyMeterNumber, purchaseElectricity,getDiscos };
+module.exports = { verifyMeterNumber, purchaseElectricity, getDiscos };

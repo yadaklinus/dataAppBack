@@ -4,6 +4,7 @@ const cableProvider = require('@/services/cableProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 const { generateRef } = require('@/lib/crypto')
+const { isNetworkError } = require('@/lib/financialSafety');
 // --- SCHEMAS ---
 
 const verifyIUCSchema = z.object({
@@ -31,12 +32,12 @@ const formatZodError = (error) => {
 const getPackages = async (req, res) => {
     try {
         const data = await cableProvider.fetchPackages();
-        
+
         // Failsafe if the provider structure changes or fails
         if (!data || !data.TV_ID) {
-            return res.status(500).json({ 
-                status: "ERROR", 
-                message: "Could not fetch packages from provider" 
+            return res.status(500).json({
+                status: "ERROR",
+                message: "Could not fetch packages from provider"
             });
         }
 
@@ -45,7 +46,7 @@ const getPackages = async (req, res) => {
 
         // Iterate dynamically over all providers (DStv, GOtv, Startimes, etc.)
         for (const [providerName, providerArray] of Object.entries(rawPackages)) {
-            
+
             sanitizedPackages[providerName] = providerArray.map(provider => {
                 return {
                     ...provider, // Keep the ID field (e.g., "ID": "dstv")
@@ -59,8 +60,8 @@ const getPackages = async (req, res) => {
                             MAXAMOUNT,
                             ...cleanProduct
                         } = product;
-                        
-                        return cleanProduct; 
+
+                        return cleanProduct;
                     })
                 };
             });
@@ -71,12 +72,12 @@ const getPackages = async (req, res) => {
             status: "OK",
             data: sanitizedPackages
         });
-        
+
     } catch (error) {
         console.error("Fetch Cable Packages Error:", error.message);
-        return res.status(500).json({ 
-            status: "ERROR", 
-            message: "Internal server error" 
+        return res.status(500).json({
+            status: "ERROR",
+            message: "Internal server error"
         });
     }
 };
@@ -89,9 +90,9 @@ const verifyIUC = async (req, res) => {
     const validation = verifyIUCSchema.safeParse(req.query);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
@@ -113,9 +114,9 @@ const purchaseSubscription = async (req, res) => {
     const validation = purchaseSubscriptionSchema.safeParse(req.body);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
@@ -126,15 +127,24 @@ const purchaseSubscription = async (req, res) => {
         // 1. Fetch live packages to get current price (Verification of cost)
         const allPackages = await cableProvider.fetchPackages();
         const providerKey = cableTV.toUpperCase();
-        const packageList = allPackages?.TV_ID?.[providerKey] || [];
-        
-        const selectedPackage = packageList.find(p => p.PRODUCT_CODE === packageCode);
+        // 1. Safely fall back to an empty object if TV_ID is missing
+        const safePackages = allPackages?.TV_ID || {};
+
+        // 2. Find the actual key in the object by comparing both as uppercase strings
+        const actualKey = Object.keys(safePackages).find(
+            (key) => key.toUpperCase() === providerKey.toUpperCase()
+        );
+
+        // 3. Extract the array using the matched key, or fallback to an empty array
+        const packageList = actualKey ? safePackages[actualKey] : [];
+
+        const selectedPackage = packageList[0].PRODUCT.find(p => p.PACKAGE_ID === packageCode);
 
         if (!selectedPackage) {
             return res.status(404).json({ status: "ERROR", message: "Invalid package code for this provider" });
         }
 
-        const amountToDeduct = Number(selectedPackage.PRODUCT_AMOUNT);
+        const amountToDeduct = Number(selectedPackage.PACKAGE_AMOUNT);
 
         // 2. Verify customer name (Safety check against stale inputs)
         const verification = await cableProvider.verifySmartCard(cableTV, smartCardNo);
@@ -142,7 +152,7 @@ const purchaseSubscription = async (req, res) => {
         // 3. Atomic Wallet Deduction
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
-            
+
             if (!wallet || Number(wallet.balance) < amountToDeduct) {
                 throw new Error("Insufficient wallet balance");
             }
@@ -168,7 +178,7 @@ const purchaseSubscription = async (req, res) => {
 
             await tx.wallet.update({
                 where: { userId },
-                data: { 
+                data: {
                     balance: { decrement: amountToDeduct },
                     totalSpent: { increment: amountToDeduct }
                 }
@@ -202,6 +212,16 @@ const purchaseSubscription = async (req, res) => {
             });
 
         } catch (apiError) {
+            // SMART AUTO-REFUND
+            if (isNetworkError(apiError)) {
+                console.warn(`[Financial Safety] Timeout for Ref: ${result.requestId}. Leaving PENDING.`);
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Connection delay. Your subscription is being processed. Please check your history shortly.",
+                    transactionId: result.requestId
+                });
+            }
+
             // 5. AUTO-REFUND
             await prisma.$transaction([
                 prisma.transaction.update({
@@ -210,7 +230,7 @@ const purchaseSubscription = async (req, res) => {
                 }),
                 prisma.wallet.update({
                     where: { userId },
-                    data: { 
+                    data: {
                         balance: { increment: amountToDeduct },
                         totalSpent: { decrement: amountToDeduct }
                     }

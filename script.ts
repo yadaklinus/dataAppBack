@@ -11,10 +11,12 @@ import { validateEnv } from '@/lib/validateEnv';
 import authRouterV1 from '@/routes/authRoutes';
 import userRouterV1 from '@/routes/userRoutes';
 import vtuRouterV1 from '@/routes/vtuRoutes';
-import flwRouterV1 from '@/routes/paymentRoutes';
+import flwRouterV1 from '@/routes/flutterwaveRoutes';
 import monifyRouterV1 from '@/routes/monnifyRoutes';
-import electrictyRouterV1 from '@/routes/electrictyRoutes';
+import electricityRouterV1 from '@/routes/electricityRoutes';
 import cableRouterV1 from '@/routes/cableRoutes';
+import educationRouterV1 from '@/routes/educationRoutes';
+import paymentRouterV1 from '@/routes/paymentRoutes';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 
 dotenv.config();
@@ -32,7 +34,7 @@ app.set('trust proxy', 1);
 // 3. Security & Cross-Origin
 app.use(helmet());
 app.use(cors({
-    origin: process.env.NODE_ENV === 'production' ? ['https://yourdomain.com'] : '*', 
+    origin: process.env.NODE_ENV === 'production' ? ['https://yourdomain.com'] : '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -70,14 +72,16 @@ app.use("/api/v1/auth", authLimiter, authRouterV1);
 app.use("/api/v1/user", userRouterV1);
 app.use("/api/v1/vtu", vtuRouterV1);
 app.use("/api/v1/flw", flwRouterV1);
-app.use("/api/v1/mfy", monifyRouterV1);
-app.use("/api/v1/elec", electrictyRouterV1);
+app.use("/api/v1/monnify", monifyRouterV1);
+app.use("/api/v1/electricity", electricityRouterV1);
 app.use("/api/v1/cable", cableRouterV1);
+app.use("/api/v1/education", educationRouterV1);
+app.use("/api/v1/payment", paymentRouterV1);
 
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     console.error(`[System Error] ${err.stack}`);
-    
+
     // Handle Prisma specific errors if needed
     if (err.code === 'P2002') {
         return res.status(409).json({ status: "ERROR", message: "Unique constraint failed on database." });
@@ -90,9 +94,9 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // 10. Start Background Services
-// Uncommented because this is your safety net for failed webhooks!
+// These are your safety net for failed webhooks and timeouts!
 startTransactionSync();
-startMonnifyTransactionSync()
+startMonnifyTransactionSync();
 
 app.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);

@@ -8,7 +8,7 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
  * Runs every minute to recover "lost" webhooks for Monnify payments.
  */
 const startMonnifyTransactionSync = () => {
-    cron.schedule('*/5 * * * *', async () => {
+    cron.schedule('*/1 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
         

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('@/middleware/authMiddleware');
-const userController = require('@/api/v1/transactions/userController');
+const userController = require('@/api/v1/user/userController');
 
 // Secure all user routes
 router.use(authMiddleware);
@@ -17,7 +17,7 @@ router.get('/profile', userController.getProfile);
  * @desc    Get aggregate data for home screen (Balance + Recent Txns)
  */
 router.get('/dashboard', userController.getDashboard);
-router.get('/pins', userController.getPrintingOrders);
+
 
 /**
  * @route   GET /api/user/transactions
