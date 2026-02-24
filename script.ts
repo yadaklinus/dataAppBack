@@ -5,7 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
-const statusMonitor = require('express-status-monitor');
+import statusMonitor from 'express-status-monitor';
 import { startTransactionSync } from '@/jobs/transactionSync';
 import { validateEnv } from '@/lib/validateEnv';
 
