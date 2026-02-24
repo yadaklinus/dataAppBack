@@ -1,7 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const monnifyMiddleware = require('@/middleware/monnifyMiddleware');
 const monnifyController = require('@/api/v1/monnify/monnifyController');
 

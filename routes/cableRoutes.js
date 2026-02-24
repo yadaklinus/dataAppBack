@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const cableController = require('@/api/v1/transactions/cableController');
 
 // --- CABLE / TV ROUTES ---

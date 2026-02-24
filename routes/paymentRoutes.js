@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const paymentController = require('@/api/v1/payment/paymentController');
 
 // All payment routes are protected

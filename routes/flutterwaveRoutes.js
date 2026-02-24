@@ -2,7 +2,7 @@ const express = require('express');
 // const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const flutterwaveController = require('@/api/v1/flw/flutterwaveController');
 const webhookController = require('@/webhook/paymentWebhook');
 

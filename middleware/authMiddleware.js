@@ -3,8 +3,8 @@ const prisma = require('@/lib/prisma');
 
 
 if (!process.env.JWT_SECRET) {
-  console.error("FATAL: JWT_SECRET env var is not set");
-  process.exit(1);
+    console.error("FATAL: JWT_SECRET env var is not set");
+    process.exit(1);
 }
 
 
@@ -21,7 +21,7 @@ const authMiddleware = async (req, res, next) => {
     try {
         // 1. Get token from header (Expected format: Bearer <token>)
         const authHeader = req.headers.authorization;
-        
+
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.status(401).json({
                 status: "ERROR",
@@ -66,7 +66,7 @@ const authMiddleware = async (req, res, next) => {
                 message: "Session expired. Please login again."
             });
         }
-        
+
         return res.status(403).json({
             status: "ERROR",
             message: "Invalid or tampered token."
@@ -74,4 +74,18 @@ const authMiddleware = async (req, res, next) => {
     }
 };
 
-module.exports = authMiddleware;
+/**
+ * Middleware to restrict access to ADMIN only
+ */
+const authorizeAdmin = (req, res, next) => {
+    if (req.user && req.user.tier === 'ADMIN') {
+        next();
+    } else {
+        return res.status(403).json({
+            status: "ERROR",
+            message: "Access restricted. Administrative privileges required."
+        });
+    }
+};
+
+module.exports = { authMiddleware, authorizeAdmin };

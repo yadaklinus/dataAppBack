@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const airtimeController = require('@/api/v1/transactions/airtimeController');
 const dataController = require('@/api/v1/transactions/dataController');
 const printingController = require('@/api/v1/transactions/pinController');

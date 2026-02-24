@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('@/middleware/authMiddleware');
+const { authMiddleware } = require('@/middleware/authMiddleware');
 const educationController = require('@/api/v1/transactions/educationController');
 
 // All education routes are protected by the authMiddleware

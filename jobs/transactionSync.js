@@ -27,7 +27,7 @@ const PROVIDERS = {
  * Runs every minute to recover "lost" webhooks or handle timeouts.
  */
 const startTransactionSync = () => {
-    cron.schedule('*/2 * * * *', async () => {
+    cron.schedule('*/6 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
 

@@ -8,10 +8,10 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
  * Runs every minute to recover "lost" webhooks for Monnify payments.
  */
 const startMonnifyTransactionSync = () => {
-    cron.schedule('*/1 * * * *', async () => {
+    cron.schedule('*/5 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
-        
+
         console.log(`\n--- [Monnify Sync Job: ${now.toISOString()}] ---`);
 
         try {
@@ -25,7 +25,7 @@ const startMonnifyTransactionSync = () => {
                     // Optional: If you support multiple providers, filter by metadata
                     // metadata: { path: ['provider'], equals: 'MONNIFY' }
                 },
-                take: 15 
+                take: 15
             });
 
             console.log(`[Result] Found ${pendingTransactions.length} pending transaction(s) to verify.`);
@@ -34,7 +34,7 @@ const startMonnifyTransactionSync = () => {
 
             for (const txn of pendingTransactions) {
                 console.log(`[Process] Verifying Ref: ${txn.reference}`);
-                
+
                 try {
                     // 2. Query Monnify API using the paymentReference
                     const verification = await monnifyProvider.verifyTransaction(txn.reference);
@@ -72,7 +72,7 @@ const startMonnifyTransactionSync = () => {
                             // Update Transaction
                             await tx.transaction.update({
                                 where: { id: txn.id },
-                                data: { 
+                                data: {
                                     status: TransactionStatus.SUCCESS,
                                     providerReference: mnfyId
                                 }
@@ -80,7 +80,7 @@ const startMonnifyTransactionSync = () => {
                         });
 
                         console.log(`[Success] ✅ Recovered: Ref ${txn.reference}`);
-                    } 
+                    }
                     else if (['failed', 'expired', 'cancelled'].includes(verification.status)) {
                         console.log(`[Update] ❌ Status is ${verification.status}. Updating DB.`);
                         await prisma.transaction.update({
@@ -94,8 +94,8 @@ const startMonnifyTransactionSync = () => {
                     if (isNotFound) {
                         console.log(`[Info] Ref: ${txn.reference} not found (User abandoned checkout).`);
                         await prisma.transaction.update({
-                            where:{ id: txn.id },
-                            data:{status:TransactionStatus.FAILED} 
+                            where: { id: txn.id },
+                            data: { status: TransactionStatus.FAILED }
                         })
                     } else {
                         console.error(`[Error] Ref: ${txn.reference} failed:`, err.message);

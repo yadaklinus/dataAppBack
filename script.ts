@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import morgan from 'morgan';
+const statusMonitor = require('express-status-monitor');
 import { startTransactionSync } from '@/jobs/transactionSync';
 import { validateEnv } from '@/lib/validateEnv';
 
@@ -17,6 +19,7 @@ import electricityRouterV1 from '@/routes/electricityRoutes';
 import cableRouterV1 from '@/routes/cableRoutes';
 import educationRouterV1 from '@/routes/educationRoutes';
 import paymentRouterV1 from '@/routes/paymentRoutes';
+import adminRouterV1 from '@/routes/adminRoutes';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 
 dotenv.config();
@@ -32,6 +35,8 @@ const PORT: number = Number(process.env.PORT) || 3009;
 app.set('trust proxy', 1);
 
 // 3. Security & Cross-Origin
+app.use(statusMonitor()); // Real-time dashboard at /status
+app.use(morgan('dev')); // Structured request logging
 app.use(helmet());
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' ? ['https://yourdomain.com'] : '*',
@@ -64,7 +69,18 @@ app.use(globalLimiter);
 
 // 7. Health Check
 app.get("/", (req: Request, res: Response) => {
-    res.json({ status: "OK", service: "Data Padi API", version: "1.0.0" });
+    const memoryUsage = process.memoryUsage();
+    res.json({
+        status: "OK",
+        service: "Data Padi API",
+        version: "1.0.0",
+        uptime: `${Math.floor(process.uptime())}s`,
+        memory: {
+            rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
+            heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+            heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`
+        }
+    });
 });
 
 // 8. Routes
@@ -77,6 +93,7 @@ app.use("/api/v1/electricity", electricityRouterV1);
 app.use("/api/v1/cable", cableRouterV1);
 app.use("/api/v1/education", educationRouterV1);
 app.use("/api/v1/payment", paymentRouterV1);
+app.use("/api/v1/admin", adminRouterV1);
 
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

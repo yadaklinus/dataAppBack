@@ -19,6 +19,7 @@ enum UserTier {
   SMART_USER
   RESELLER
   API_PARTNER
+  ADMIN
 }
 
 model User {
