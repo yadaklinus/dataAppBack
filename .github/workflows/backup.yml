@@ -1,25 +1,37 @@
 name: Daily Database Backup
+
 on:
   schedule:
-    - cron: '0 0 * * *' # Every night at midnight
-  workflow_dispatch: # Allows you to run it manually with a button
+    - cron: '0 0 * * *' # Runs every night at midnight
+  workflow_dispatch: # Allows you to trigger it manually for testing
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
       - name: Install PostgreSQL Client
-        run: sudo apt-get install -y postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
       - name: Run pg_dump
         env:
+          # This pulls your secret from GitHub Settings
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
-          # The -d flag forces pg_dump to treat the string as a remote connection URL
-          pg_dump -d "$DATABASE_URL" > backup_$(date +%Y-%m-%d).sql
+          # Ensure the variable is not empty
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Error: NEON_DATABASE_URL secret is missing!"
+            exit 1
+          fi
           
+          # We use --dbname to force a network connection and wrap in quotes
+          # to handle special characters in your password.
+          pg_dump --dbname="$DATABASE_URL" > backup_$(date +%Y-%m-%d).sql
+
       - name: Upload Backup to GitHub
         uses: actions/upload-artifact@v4
         with:
           name: db-backup
           path: backup_*.sql
+          retention-days: 7 # Keeps the list clean; change to 90 if needed
