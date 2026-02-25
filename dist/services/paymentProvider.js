@@ -111,11 +111,13 @@ const createVirtualAccount = async (params) => {
             phonenumber: phoneNumber,
             firstname: "Data Padi",
             lastname: fullName.toUpperCase(),
-            tx_ref: tx_ref
+            tx_ref: tx_ref,
+            narration: `Data Padi - ${fullName}`,
         },
         ...flwHeader
     };
     const response = await requestWithRetry(config);
+    console.log("response", response.data.data);
     return response.data.data;
 };
 module.exports = {

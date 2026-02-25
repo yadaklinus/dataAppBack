@@ -9,6 +9,7 @@ const cableProvider = require('@/services/cableProvider');
 const educationProvider = require('@/services/educationProvider');
 const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
+const { getWalletCreditAmount } = require('@/lib/paymentUtils');
 /**
  * Provider Mapping for Service Transactions
  */
@@ -71,16 +72,19 @@ const reconcileFunding = async (txn) => {
             const currentTx = await tx.transaction.findUnique({ where: { id: txn.id } });
             if (!currentTx || currentTx.status !== TransactionStatus.PENDING)
                 return;
+            const totalPaid = Number(verification.amount);
+            const walletCreditAmount = getWalletCreditAmount(totalPaid);
             await tx.wallet.upsert({
                 where: { userId: txn.userId },
-                update: { balance: { increment: txn.amount } },
-                create: { userId: txn.userId, balance: txn.amount }
+                update: { balance: { increment: walletCreditAmount } },
+                create: { userId: txn.userId, balance: walletCreditAmount }
             });
             await tx.transaction.update({
                 where: { id: txn.id },
                 data: {
                     status: TransactionStatus.SUCCESS,
-                    providerReference: String(verification.id)
+                    providerReference: String(verification.id),
+                    fee: Math.max(0, totalPaid - walletCreditAmount)
                 }
             });
         });

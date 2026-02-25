@@ -3,12 +3,13 @@ const cron = require('node-cron');
 const prisma = require('@/lib/prisma');
 const monnifyProvider = require('@/services/monnifyProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
+const { getWalletCreditAmount } = require('@/lib/paymentUtils');
 /**
  * Monnify Background Sync Job
  * Runs every minute to recover "lost" webhooks for Monnify payments.
  */
 const startMonnifyTransactionSync = () => {
-    cron.schedule('*/5 * * * *', async () => {
+    cron.schedule('*/1 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
         console.log(`\n--- [Monnify Sync Job: ${now.toISOString()}] ---`);
@@ -40,7 +41,8 @@ const startMonnifyTransactionSync = () => {
                     console.log(`[Verify] Status: ${verification.status} | Paid: ₦${verification.amount}`);
                     // 3. Process Success
                     if (verification.status === "successful") {
-                        const principalToCredit = Number(txn.amount);
+                        const totalPaid = Number(verification.amount);
+                        const walletCreditAmount = getWalletCreditAmount(totalPaid);
                         const userId = txn.userId;
                         const mnfyId = String(verification.id);
                         // 4. Atomic Update (Idempotent)
@@ -55,14 +57,15 @@ const startMonnifyTransactionSync = () => {
                             // Update Wallet
                             await tx.wallet.update({
                                 where: { userId },
-                                data: { balance: { increment: principalToCredit } }
+                                data: { balance: { increment: walletCreditAmount } }
                             });
                             // Update Transaction
                             await tx.transaction.update({
                                 where: { id: txn.id },
                                 data: {
                                     status: TransactionStatus.SUCCESS,
-                                    providerReference: mnfyId
+                                    providerReference: mnfyId,
+                                    fee: Math.max(0, totalPaid - walletCreditAmount)
                                 }
                             });
                         });

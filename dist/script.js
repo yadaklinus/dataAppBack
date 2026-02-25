@@ -10,7 +10,7 @@ const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const morgan_1 = __importDefault(require("morgan"));
-const statusMonitor = require('express-status-monitor');
+const express_status_monitor_1 = __importDefault(require("express-status-monitor"));
 const transactionSync_1 = require("@/jobs/transactionSync");
 const validateEnv_1 = require("@/lib/validateEnv");
 // Routes
@@ -24,7 +24,7 @@ const cableRoutes_1 = __importDefault(require("@/routes/cableRoutes"));
 const educationRoutes_1 = __importDefault(require("@/routes/educationRoutes"));
 const paymentRoutes_1 = __importDefault(require("@/routes/paymentRoutes"));
 const adminRoutes_1 = __importDefault(require("@/routes/adminRoutes"));
-const monnifyTransactionSync_1 = require("./jobs/monnifyTransactionSync");
+const paystackRoutes_1 = __importDefault(require("@/routes/paystackRoutes"));
 dotenv_1.default.config();
 // 1. Validate Environment variables before doing anything else
 (0, validateEnv_1.validateEnv)();
@@ -34,7 +34,7 @@ const PORT = Number(process.env.PORT) || 3009;
 // This ensures req.ip is the user's IP, not the server's IP.
 app.set('trust proxy', 1);
 // 3. Security & Cross-Origin
-app.use(statusMonitor()); // Real-time dashboard at /status
+app.use((0, express_status_monitor_1.default)()); // Real-time dashboard at /status
 app.use((0, morgan_1.default)('dev')); // Structured request logging
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)({
@@ -87,6 +87,7 @@ app.use("/api/v1/cable", cableRoutes_1.default);
 app.use("/api/v1/education", educationRoutes_1.default);
 app.use("/api/v1/payment", paymentRoutes_1.default);
 app.use("/api/v1/admin", adminRoutes_1.default);
+app.use("/api/v1/paystack", paystackRoutes_1.default);
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err, req, res, next) => {
     console.error(`[System Error] ${err.stack}`);
@@ -102,7 +103,8 @@ app.use((err, req, res, next) => {
 // 10. Start Background Services
 // These are your safety net for failed webhooks and timeouts!
 (0, transactionSync_1.startTransactionSync)();
-(0, monnifyTransactionSync_1.startMonnifyTransactionSync)();
+//startMonnifyTransactionSync();
+//startPaystackTransactionSync();
 app.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);

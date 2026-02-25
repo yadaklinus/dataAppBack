@@ -10,9 +10,9 @@ const MONNIFY_SECRET_KEY = process.env.MONNIFY_SECRET_KEY;
 const MONNIFY_CONTRACT_CODE = process.env.MONNIFY_CONTRACT_CODE;
 const MONNIFY_BASE_URL = process.env.MONNIFY_BASE_URL || 'https://sandbox.monnify.com';
 
-if (process.env.NODE_ENV === 'production' && MONNIFY_BASE_URL.includes('sandbox')) {
-    throw new Error('FATAL: Using sandbox Monnify URL in production!');
-}
+// if (process.env.NODE_ENV === 'production' && MONNIFY_BASE_URL.includes('sandbox')) {
+//     throw new Error('FATAL: Using sandbox Monnify URL in production!');
+// }
 
 let cachedToken = null;
 let tokenExpiry = null;
@@ -27,13 +27,14 @@ const getAccessToken = async () => {
 
     const auth = Buffer.from(`${MONNIFY_API_KEY}:${MONNIFY_SECRET_KEY}`).toString('base64');
 
-    const response = await axios.post(`${MONNIFY_BASE_URL}/api/v1/auth/login`, {}, {
+    const response = await fetch(`${MONNIFY_BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
         headers: { 'Authorization': `Basic ${auth}` }
     });
 
-    const json = response.data;
+    const json = await response.json();
 
-    if (!json.requestSuccessful) {
+    if (!response.ok || !json.requestSuccessful) {
         throw new Error(`Monnify Auth Failed: ${json.responseMessage}`);
     }
 
@@ -41,6 +42,26 @@ const getAccessToken = async () => {
     tokenExpiry = Date.now() + (json.responseBody.expiresIn * 1000);
 
     return cachedToken;
+};
+
+/**
+ * Helper: Fetch with Exponential Backoff
+ */
+const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
+    try {
+        const response = await fetch(url, options);
+        if (!response.ok && response.status >= 500 && retries > 0) {
+            await new Promise(r => setTimeout(r, backoff));
+            return fetchWithRetry(url, options, retries - 1, backoff * 2);
+        }
+        return response;
+    } catch (e) {
+        if (retries > 0) {
+            await new Promise(r => setTimeout(r, backoff));
+            return fetchWithRetry(url, options, retries - 1, backoff * 2);
+        }
+        throw e;
+    }
 };
 
 /**
