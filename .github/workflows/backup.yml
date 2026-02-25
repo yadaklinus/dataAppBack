@@ -1,0 +1,24 @@
+name: Daily Database Backup
+on:
+  schedule:
+    - cron: '0 0 * * *' # Every night at midnight
+  workflow_dispatch: # Allows you to run it manually with a button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL Client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Run pg_dump
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          pg_dump $DATABASE_URL > backup_$(date +%Y-%m-%d).sql
+
+      - name: Upload Backup to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup_*.sql
