@@ -15,8 +15,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
-          pg_dump $DATABASE_URL > backup_$(date +%Y-%m-%d).sql
-
+          # The -d flag forces pg_dump to treat the string as a remote connection URL
+          pg_dump -d "$DATABASE_URL" > backup_$(date +%Y-%m-%d).sql
+          
       - name: Upload Backup to GitHub
         uses: actions/upload-artifact@v4
         with:
