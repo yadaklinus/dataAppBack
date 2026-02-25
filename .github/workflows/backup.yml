@@ -2,31 +2,33 @@ name: Daily Database Backup
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs every night at midnight
-  workflow_dispatch: # Allows you to trigger it manually for testing
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install PostgreSQL Client
+      - name: Install PostgreSQL 17 Client
         run: |
+          # Add the official PostgreSQL repository to get version 17
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y wget gnupg2
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
 
       - name: Run pg_dump
         env:
-          # This pulls your secret from GitHub Settings
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
-          # Ensure the variable is not empty
           if [ -z "$DATABASE_URL" ]; then
             echo "Error: NEON_DATABASE_URL secret is missing!"
             exit 1
           fi
           
-          # We use --dbname to force a network connection and wrap in quotes
-          # to handle special characters in your password.
+          # Force use of pg_dump 17
           pg_dump --dbname="$DATABASE_URL" > backup_$(date +%Y-%m-%d).sql
 
       - name: Upload Backup to GitHub
@@ -34,4 +36,4 @@ jobs:
         with:
           name: db-backup
           path: backup_*.sql
-          retention-days: 7 # Keeps the list clean; change to 90 if needed
+          retention-days: 7
