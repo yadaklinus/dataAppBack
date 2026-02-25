@@ -1,9 +1,10 @@
 const monnifyController = require('@/api/v1/monnify/monnifyController');
 const flutterwaveController = require('@/api/v1/flw/flutterwaveController');
+const paystackController = require('@/api/v1/paystack/paystackController');
 
 /**
  * Switchable Payment Gateway Logic
- * This controller acts as a proxy for either Monnify or Flutterwave
+ * This controller acts as a proxy for either Monnify, Flutterwave or Paystack
  * based on the ACTIVE_PAYMENT_GATEWAY environment variable.
  */
 const getActiveController = () => {
@@ -11,6 +12,10 @@ const getActiveController = () => {
 
     if (gateway === 'FLUTTERWAVE') {
         return flutterwaveController;
+    }
+
+    if (gateway === 'PAYSTACK') {
+        return paystackController;
     }
 
     // Default to Monnify

@@ -1,35 +1,36 @@
 const cron = require('node-cron');
 const prisma = require('@/lib/prisma');
-const monnifyProvider = require('@/services/monnifyProvider');
+const paystackProvider = require('@/services/paystackProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { getWalletCreditAmount } = require('@/lib/paymentUtils');
 
 /**
- * Monnify Background Sync Job
- * Runs every minute to recover "lost" webhooks for Monnify payments.
+ * Paystack Background Sync Job
+ * Runs every 5 minutes to recover "lost" webhooks for Paystack payments.
  */
-const startMonnifyTransactionSync = () => {
+const startPaystackTransactionSync = () => {
     cron.schedule('*/1 * * * *', async () => {
         const now = new Date();
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
 
-        console.log(`\n--- [Monnify Sync Job: ${now.toISOString()}] ---`);
+        console.log(`\n--- [Paystack Sync Job: ${now.toISOString()}] ---`);
 
         try {
-            // 1. Fetch pending records
-            // We specifically look for transactions that were initialized but not yet finalized.
+            // 1. Fetch pending records initialized with Paystack
             const pendingTransactions = await prisma.transaction.findMany({
                 where: {
                     type: TransactionType.WALLET_FUNDING,
                     status: TransactionStatus.PENDING,
                     createdAt: { lt: twoMinutesAgo },
-                    // Optional: If you support multiple providers, filter by metadata
-                    // metadata: { path: ['provider'], equals: 'MONNIFY' }
+                    metadata: {
+                        path: ['provider'],
+                        equals: 'PAYSTACK'
+                    }
                 },
                 take: 15
             });
 
-            console.log(`[Result] Found ${pendingTransactions.length} pending transaction(s) to verify.`);
+            console.log(`[Result] Found ${pendingTransactions.length} pending Paystack transaction(s) to verify.`);
 
             if (pendingTransactions.length === 0) return;
 
@@ -37,8 +38,8 @@ const startMonnifyTransactionSync = () => {
                 console.log(`[Process] Verifying Ref: ${txn.reference}`);
 
                 try {
-                    // 2. Query Monnify API using the paymentReference
-                    const verification = await monnifyProvider.verifyTransaction(txn.reference);
+                    // 2. Query Paystack API
+                    const verification = await paystackProvider.verifyTransaction(txn.reference);
 
                     if (!verification) {
                         console.log(`[Verify] ⚠️ No response for Ref: ${txn.reference}`);
@@ -48,12 +49,12 @@ const startMonnifyTransactionSync = () => {
                     console.log(`[Verify] Status: ${verification.status} | Paid: ₦${verification.amount}`);
 
                     // 3. Process Success
-                    if (verification.status === "successful") {
+                    if (verification.status === "success" || verification.status === "successful") {
                         const totalPaid = Number(verification.amount);
                         const walletCreditAmount = getWalletCreditAmount(totalPaid);
 
                         const userId = txn.userId;
-                        const mnfyId = String(verification.id);
+                        const pstkReference = String(verification.reference);
 
                         // 4. Atomic Update (Idempotent)
                         await prisma.$transaction(async (tx) => {
@@ -61,7 +62,6 @@ const startMonnifyTransactionSync = () => {
                                 where: { id: txn.id }
                             });
 
-                            // Critical: Ensure it hasn't been updated by a webhook in the last millisecond
                             if (!currentTx || currentTx.status !== TransactionStatus.PENDING) {
                                 return;
                             }
@@ -77,7 +77,7 @@ const startMonnifyTransactionSync = () => {
                                 where: { id: txn.id },
                                 data: {
                                     status: TransactionStatus.SUCCESS,
-                                    providerReference: mnfyId,
+                                    providerReference: pstkReference,
                                     fee: Math.max(0, totalPaid - walletCreditAmount)
                                 }
                             });
@@ -85,7 +85,7 @@ const startMonnifyTransactionSync = () => {
 
                         console.log(`[Success] ✅ Recovered: Ref ${txn.reference}`);
                     }
-                    else if (['failed', 'expired', 'cancelled'].includes(verification.status)) {
+                    else if (['failed', 'abandoned', 'reversed'].includes(verification.status)) {
                         console.log(`[Update] ❌ Status is ${verification.status}. Updating DB.`);
                         await prisma.transaction.update({
                             where: { id: txn.id },
@@ -93,23 +93,18 @@ const startMonnifyTransactionSync = () => {
                         });
                     }
                 } catch (err) {
-                    // Monnify returns 404 if the user never even opened the checkout link
                     const isNotFound = err.status === 404 || err.message?.includes('404');
                     if (isNotFound) {
-                        console.log(`[Info] Ref: ${txn.reference} not found (User abandoned checkout).`);
-                        await prisma.transaction.update({
-                            where: { id: txn.id },
-                            data: { status: TransactionStatus.FAILED }
-                        })
+                        console.log(`[Info] Ref: ${txn.reference} not found on Paystack (User hasn't paid).`);
                     } else {
                         console.error(`[Error] Ref: ${txn.reference} failed:`, err.message);
                     }
                 }
             }
         } catch (error) {
-            console.error('[Sync Job] Critical Error:', error.message);
+            console.error('[Paystack Sync Job] Critical Error:', error.message);
         }
     });
 };
 
-module.exports = { startMonnifyTransactionSync };
+module.exports = { startPaystackTransactionSync };

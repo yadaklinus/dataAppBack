@@ -2,6 +2,7 @@ const prisma = require('@/lib/prisma');
 const paymentProvider = require('@/services/paymentProvider');
 const { TransactionStatus } = require('@prisma/client');
 const crypto = require('crypto');
+const { getWalletCreditAmount } = require('@/lib/paymentUtils');
 
 /**
  * Logic: Reverse-calculate the principal to credit the wallet
@@ -15,23 +16,6 @@ function safeCompare(a, b) {
     }
 }
 
-const getWalletCreditAmount = (totalReceived) => {
-    const total = Number(totalReceived);
-
-    // Safety check for very small amounts to avoid negative balances
-    if (total <= 40) return 0;
-
-    if (total <= 2540) {
-        // Tier 1: Small amounts (Principal <= ₦2,500)
-        return total - 40;
-    } else if (total > 102000) {
-        // Tier 3: Large amounts (Principal > ₦100,000)
-        return total - 2000;
-    } else {
-        // Tier 2: Mid-range (2% Fee)
-        return Math.floor(total * 0.98);
-    }
-};
 
 /**
  * Flutterwave Webhook Handler
@@ -47,6 +31,7 @@ const handleFlutterwaveWebhook = async (req, res) => {
 
     const payload = req.body;
 
+
     // Always acknowledge 200 to FLW first to prevent unnecessary retries and queue blocks
     res.status(200).end();
 
@@ -55,14 +40,14 @@ const handleFlutterwaveWebhook = async (req, res) => {
     const eventType = payload.event || payload['event.type'];
     const validEvents = ['charge.completed', 'BANK_TRANSFER_TRANSACTION', 'transfer.completed'];
 
-    if (!validEvents.includes(eventType) || payload.status !== 'successful') {
-        console.log(`[Webhook] Ignored event: ${eventType} | Status: ${payload.status}`);
+    if (!validEvents.includes(eventType) || payload.data.status !== 'successful') {
+        console.log(`[Webhook] Ignored event: ${eventType} | Status: ${payload.data.status}`);
         return;
     }
 
     try {
         // Handle both nested { data: {} } and flat payloads
-        const data = payload.data || payload;
+        const data = payload.data;
         const flwId = data.id;
 
         // Exact matching based on your payload
@@ -107,10 +92,10 @@ const handleFlutterwaveWebhook = async (req, res) => {
         else if (reference && reference.startsWith('VA-REG-')) {
             const parts = reference.split('-');
             userId = parts.slice(3).join('-');
-            internalReference = `VA-IN-${flwId}`;
+            //internalReference = `VA-IN-${flwId}`;
 
             const kycRecord = await prisma.kycData.findFirst({
-                where: { accountReference: { contains: userId } }
+                where: { userId }
             });
 
             if (!kycRecord) { console.error('[Webhook] Unknown VA reference'); return; }

@@ -2,38 +2,26 @@ const crypto = require('crypto');
 const prisma = require('@/lib/prisma');
 const monnifyProvider = require('@/services/monnifyProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
+const { getWalletCreditAmount } = require('@/lib/paymentUtils');
 
-/**
- * Internal helper to calculate wallet credit based on tiered fees:
- * ₦40 flat for <= 2500, 2% for mid, ₦2000 cap for > 100k
- */
-const getWalletCreditAmount = (totalReceived) => {
-    const total = Number(totalReceived);
-    if (total <= 40) return 0;
-
-    if (total <= 2540) return total - 40;
-    if (total > 102000) return total - 2000;
-    return Math.floor(total * 0.98);
+const verifySignature = (payload, signature) => {
+    const secret = process.env.MONNIFY_SECRET_KEY;
+    const hash = crypto
+        .createHmac('sha512', secret)
+        .update(JSON.stringify(payload))
+        .digest('hex');
+    return hash === signature;
 };
 
-function safeCompare(a, b) {
-    try {
-        return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-    } catch { return false; }
-}
-
 const handleMonnifyWebhook = async (req, res) => {
-    const MONNIFY_SECRET = process.env.MONNIFY_SECRET_KEY;
     const signature = req.headers['monnify-signature'];
 
-    // 1. Security: Verify HMAC-SHA512 Signature
-    const computedHash = crypto
-        .createHmac('sha512', MONNIFY_SECRET)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
 
-    if (!signature || !safeCompare(signature, computedHash)) {
+    // 1. Security: Verify HMAC-SHA512 Signature
+    if (!signature || !verifySignature(req.body, signature)) {
         console.warn("[Monnify Webhook] Invalid signature from IP:", req.ip);
+        // Important: Still return 200 perhaps to stop retries if it's a known bad actor, 
+        // but 401 is technically more correct for invalid sigs.
         return res.status(401).end();
     }
 

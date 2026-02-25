@@ -73,13 +73,14 @@ const purchaseData = async (req, res) => {
 
         const networkGroups = allPlans.MOBILE_NETWORK?.[networkKey] || [];
 
-        for (const group of networkGroups) {
-            const found = group.PRODUCT.find(p =>
+        for (const group of networkGroups[0].PRODUCT) {
+            const p = group;
+            const found = (
                 String(p.PRODUCT_CODE) === String(planId) ||
                 String(p.PRODUCT_ID) === String(planId)
             );
             if (found) {
-                selectedPlan = found;
+                selectedPlan = p;
                 break;
             }
         }

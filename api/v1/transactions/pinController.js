@@ -75,6 +75,8 @@ const printPins = async (req, res) => {
         try {
             const providerResponse = await pinProvider.buyEpin(network, value, qty, result.requestId);
 
+            console.log(providerResponse)
+
             const pinRecords = providerResponse.pins.map(p => ({
                 transactionId: result.transaction.id,
                 network: network.toUpperCase() === '9MOBILE' ? 'NINE_MOBILE' : network.toUpperCase(),

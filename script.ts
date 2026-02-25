@@ -20,7 +20,9 @@ import cableRouterV1 from '@/routes/cableRoutes';
 import educationRouterV1 from '@/routes/educationRoutes';
 import paymentRouterV1 from '@/routes/paymentRoutes';
 import adminRouterV1 from '@/routes/adminRoutes';
+import paystackRouterV1 from '@/routes/paystackRoutes';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
+import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
 
 dotenv.config();
 
@@ -94,6 +96,7 @@ app.use("/api/v1/cable", cableRouterV1);
 app.use("/api/v1/education", educationRouterV1);
 app.use("/api/v1/payment", paymentRouterV1);
 app.use("/api/v1/admin", adminRouterV1);
+app.use("/api/v1/paystack", paystackRouterV1);
 
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -113,7 +116,8 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 // 10. Start Background Services
 // These are your safety net for failed webhooks and timeouts!
 startTransactionSync();
-startMonnifyTransactionSync();
+//startMonnifyTransactionSync();
+//startPaystackTransactionSync();
 
 app.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);
