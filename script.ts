@@ -21,8 +21,11 @@ import educationRouterV1 from '@/routes/educationRoutes';
 import paymentRouterV1 from '@/routes/paymentRoutes';
 import adminRouterV1 from '@/routes/adminRoutes';
 import paystackRouterV1 from '@/routes/paystackRoutes';
+import { createServer } from 'http';
+import { initSocket } from '@/lib/socket';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
+import { startNelloByteStatusJob } from './jobs/nelloByteStatusJob';
 
 dotenv.config();
 
@@ -113,13 +116,21 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     });
 });
 
+
 // 10. Start Background Services
 // These are your safety net for failed webhooks and timeouts!
 startTransactionSync();
+startNelloByteStatusJob();
 //startMonnifyTransactionSync();
 //startPaystackTransactionSync();
 
-app.listen(PORT, () => {
+const httpServer = createServer(app);
+
+// Initialize Socket.io
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
+    console.log(`[Socket] Real-time engine initialized.`);
 });

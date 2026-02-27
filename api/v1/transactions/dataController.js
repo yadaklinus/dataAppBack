@@ -142,9 +142,24 @@ const purchaseData = async (req, res) => {
                 where: { id: result.transaction.id },
                 data: {
                     status: TransactionStatus.SUCCESS,
-                    providerReference: providerResponse.orderId
+                    providerReference: providerResponse.orderId || providerResponse.transactionid,
+                    providerStatus: providerResponse.status || providerResponse.transactionstatus
                 }
             });
+
+            // 🟢 Emit WebSocket Event
+            const { getIO } = require('@/lib/socket');
+            try {
+                getIO().to(userId).emit('transaction_update', {
+                    status: 'SUCCESS',
+                    type: 'DATA',
+                    amount: sellingPrice,
+                    reference: result.requestId,
+                    metadata: { planName: selectedPlan.PRODUCT_NAME }
+                });
+            } catch (socketErr) {
+                console.error("[Socket Error]", socketErr.message);
+            }
 
             return res.status(200).json({
                 status: "OK",

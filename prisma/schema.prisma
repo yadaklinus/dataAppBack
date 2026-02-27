@@ -130,6 +130,8 @@ model Transaction {
   reference         String  @unique
   providerReference String? @unique
 
+  providerStatus String?
+
   metadata Json?
 
   printedPins RechargePin[]

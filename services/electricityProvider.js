@@ -53,8 +53,10 @@ const verifyMeter = async (discoCode, meterNo, meterType) => {
 const payBill = async (params) => {
     const { discoCode, meterType, meterNo, amount, phoneNo, requestId } = params;
 
+    console.log(discoCode, meterType, meterNo, amount, phoneNo, requestId)
+
     try {
-        const response = await axios.get(`${BASE_URL}/APIEcurtricityV1.asp`, {
+        const response = await axios.get(`${BASE_URL}/APIElectricityV1.asp`, {
             params: {
                 UserID: USER_ID,
                 APIKey: API_KEY,
@@ -68,19 +70,20 @@ const payBill = async (params) => {
             }
         });
 
+
         // 100 = ORDER_RECEIVED
-        if (response.data.statuscode === "100" || response.data.status === "ORDER_RECEIVED") {
+        if (response.data.statuscode === "100" || response.data.status === "ORDER_RECEIVED" || response.data.transactionstatus === "ORDER_RECEIVED") {
             return {
                 success: true,
-                orderId: response.data.orderid,
+                orderId: response.data.orderid || response.data.transactionid,
                 token: response.data.metertoken || null, // Token for prepaid meters
-                status: response.data.status
+                status: response.data.status || response.data.transactionstatus
             };
         }
 
         throw new Error(response.data.status || "Electricity payment failed");
     } catch (error) {
-
+        //console.log(error)
         console.error("Nellobyte Electricity Error:", error.message);
         throw error;
     }

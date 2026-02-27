@@ -169,6 +169,24 @@ const purchasePin = async (req, res) => {
                 }
             });
 
+            // 🟢 Emit WebSocket Event
+            const { getIO } = require('@/lib/socket');
+            try {
+                getIO().to(userId).emit('transaction_update', {
+                    status: 'SUCCESS',
+                    type: 'EDUCATION',
+                    amount: pinCost,
+                    reference: result.requestId,
+                    metadata: {
+                        provider,
+                        examType,
+                        cardDetails: providerResponse.cardDetails
+                    }
+                });
+            } catch (socketErr) {
+                console.error("[Socket Error]", socketErr.message);
+            }
+
             return res.status(200).json({
                 status: "OK",
                 message: `${provider} PIN purchase successful`,

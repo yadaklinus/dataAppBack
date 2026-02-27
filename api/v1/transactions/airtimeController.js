@@ -99,9 +99,23 @@ const purchaseAirtime = async (req, res) => {
                 where: { id: result.transaction.id },
                 data: {
                     status: TransactionStatus.SUCCESS,
-                    providerReference: providerResponse.orderId
+                    providerReference: providerResponse.orderId || providerResponse.transactionid,
+                    providerStatus: providerResponse.status || providerResponse.transactionstatus
                 }
             });
+
+            // 🟢 Emit WebSocket Event for Real-time Update
+            const { getIO } = require('@/lib/socket');
+            try {
+                getIO().to(userId).emit('transaction_update', {
+                    status: 'SUCCESS',
+                    type: 'AIRTIME',
+                    amount: airtimeAmount,
+                    reference: result.requestId
+                });
+            } catch (socketErr) {
+                console.error("[Socket Error]", socketErr.message);
+            }
 
             return res.status(200).json({
                 status: "OK",

@@ -182,6 +182,18 @@ const handleFlutterwaveWebhook = async (req, res) => {
                     }
                 });
 
+                // 🟢 Emit WebSocket Event for Wallet Funding
+                const { getIO } = require('@/lib/socket');
+                try {
+                    getIO().to(userId).emit('wallet_funded', {
+                        amount: walletCreditAmount,
+                        method: data.payment_type || 'transfer',
+                        reference: reference
+                    });
+                } catch (socketErr) {
+                    console.error("[Socket Error]", socketErr.message);
+                }
+
                 console.log(`[Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
             }
         });

@@ -72,6 +72,8 @@ const verifyMeterNumber = async (req, res) => {
     // Validate Query Params
     const validation = verifyMeterSchema.safeParse(req.query);
 
+
+
     if (!validation.success) {
         return res.status(400).json({
             status: "ERROR",
@@ -83,6 +85,7 @@ const verifyMeterNumber = async (req, res) => {
 
     try {
         const result = await electricityProvider.verifyMeter(discoCode, meterNo, meterType);
+
         return res.status(200).json({ status: "OK", data: result });
     } catch (error) {
         return res.status(400).json({ status: "ERROR", message: error.message });
@@ -132,6 +135,8 @@ const purchaseElectricity = async (req, res) => {
                         meterNo,
                         meterType,
                         customerName: verification.customer_name,
+                        address: verification.customer_address,
+                        token: "",
                         recipient: phoneNo
                     }
                 }
@@ -159,18 +164,39 @@ const purchaseElectricity = async (req, res) => {
                 requestId: result.requestId
             });
 
+            console.log("Gotten From Controller", providerResponse)
+
             // 4. Update Transaction Success
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
                     status: TransactionStatus.SUCCESS,
                     providerReference: providerResponse.orderId,
+                    providerStatus: providerResponse.status || providerResponse.transactionstatus,
                     metadata: {
                         ...result.transaction.metadata,
-                        token: providerResponse.token
+                        token: providerResponse.metertoken
                     }
                 }
             });
+
+            // 🟢 Emit WebSocket Event
+            const { getIO } = require('@/lib/socket');
+            try {
+                getIO().to(userId).emit('transaction_update', {
+                    status: 'SUCCESS',
+                    type: 'ELECTRICITY',
+                    amount: billAmount,
+                    reference: result.requestId,
+                    metadata: {
+                        discoCode,
+                        meterNo,
+                        token: providerResponse.metertoken
+                    }
+                });
+            } catch (socketErr) {
+                console.error("[Socket Error]", socketErr.message);
+            }
 
             return res.status(200).json({
                 status: "OK",

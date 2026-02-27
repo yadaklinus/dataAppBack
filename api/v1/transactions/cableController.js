@@ -205,6 +205,24 @@ const purchaseSubscription = async (req, res) => {
                 }
             });
 
+            // 🟢 Emit WebSocket Event
+            const { getIO } = require('@/lib/socket');
+            try {
+                getIO().to(userId).emit('transaction_update', {
+                    status: 'SUCCESS',
+                    type: 'CABLE_TV',
+                    amount: amountToDeduct,
+                    reference: result.requestId,
+                    metadata: {
+                        cableTV,
+                        packageCode,
+                        packageName: selectedPackage.PRODUCT_NAME,
+                    }
+                });
+            } catch (socketErr) {
+                console.error("[Socket Error]", socketErr.message);
+            }
+
             return res.status(200).json({
                 status: "OK",
                 message: `${selectedPackage.PRODUCT_NAME} activated successfully for ${verification.customer_name}`,
