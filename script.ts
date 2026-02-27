@@ -22,7 +22,7 @@ import paymentRouterV1 from '@/routes/paymentRoutes';
 import adminRouterV1 from '@/routes/adminRoutes';
 import paystackRouterV1 from '@/routes/paystackRoutes';
 import { createServer } from 'http';
-import { initSocket } from '@/lib/socket';
+// import { initSocket } from '@/lib/socket';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
 import { startNelloByteStatusJob } from './jobs/nelloByteStatusJob';
@@ -127,7 +127,7 @@ startNelloByteStatusJob();
 const httpServer = createServer(app);
 
 // Initialize Socket.io
-initSocket(httpServer);
+// initSocket(httpServer);
 
 httpServer.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);
