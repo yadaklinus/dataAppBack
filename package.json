@@ -24,6 +24,7 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^25.2.3",
     "@types/socket.io": "^3.0.1",
+    "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
