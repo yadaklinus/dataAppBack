@@ -201,7 +201,8 @@ const purchaseSubscription = async (req, res) => {
                 where: { id: result.transaction.id },
                 data: {
                     status: TransactionStatus.SUCCESS,
-                    providerReference: providerResponse.orderId
+                    providerReference: providerResponse.orderId,
+                    providerResponse: providerResponse.status
                 }
             });
 

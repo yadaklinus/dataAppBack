@@ -64,11 +64,11 @@ const subscribe = async (params) => {
             }
         });
 
-        if (response.data.statuscode === "100" || response.data.status === "ORDER_RECEIVED") {
+        if (response.data.statuscode === "100" || response.data.status === "ORDER_RECEIVED" || response.data.transactionstatus === "ORDER_RECEIVED") {
             return {
                 success: true,
                 orderId: response.data.orderid,
-                status: response.data.status
+                status: response.data.status || response.data.transactionstatus
             };
         }
 

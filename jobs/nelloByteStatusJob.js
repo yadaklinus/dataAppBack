@@ -19,6 +19,7 @@ const startNelloByteStatusJob = () => {
                 where: {
                     OR: [
                         { providerStatus: "ORDER_RECEIVED" },
+                        { providerStatus: "TXN_HISTORY" },
                         { status: TransactionStatus.PENDING },
                         { status: TransactionStatus.FAILED }
                     ],

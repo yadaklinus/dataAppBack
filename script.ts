@@ -44,7 +44,7 @@ app.use(statusMonitor()); // Real-time dashboard at /status
 app.use(morgan('dev')); // Structured request logging
 app.use(helmet());
 app.use(cors({
-    origin: process.env.NODE_ENV === 'production' ? ['https://yourdomain.com'] : '*',
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -124,12 +124,12 @@ startNelloByteStatusJob();
 //startMonnifyTransactionSync();
 //startPaystackTransactionSync();
 
-const httpServer = createServer(app);
+// const httpServer = createServer(app);
 
 // Initialize Socket.io
 // initSocket(httpServer);
 
-httpServer.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`[Server] Data Padi running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
     console.log(`[Socket] Real-time engine initialized.`);
