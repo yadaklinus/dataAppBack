@@ -20,7 +20,7 @@ const fetchPackages = async (type = 'WAEC') => {
     }
 };
 /**
- * Verify JAMB Profile ID
+ * Verify JAMB Profile 
  */
 const verifyJambProfile = async (profileId) => {
     try {
