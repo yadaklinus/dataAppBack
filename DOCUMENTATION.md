@@ -43,7 +43,29 @@ We implement **Access Tokens** (15m expiry) and **Refresh Tokens** (7d expiry).
 - **Account Lockout**: After 5 failed login attempts, the server locks the account for 15 minutes.
 - **Timing Attack Mitigation**: Uses "dummy" password hashes to ensure valid and invalid emails take the same time to process.
 
-### 3. Password Policy
+### 3. Password Reset Flow
+The password reset process uses a secure OTP-based verification (10m expiry).
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Auth API
+    participant M as Mailer
+    participant D as Database
+
+    U->>A: Request OTP (email)
+    A->>D: Save OTP & Expiry
+    A->>M: Send OTP Email
+    M-->>U: Deliver OTP
+    U->>A: Verify OTP (email, otp)
+    A->>D: Check OTP Validity
+    D-->>A: Validated
+    A-->>U: Verification Success
+    U->>A: Reset Password (email, otp, newPassword)
+    A->>D: Update PasswordHash & Delete OTP
+    A-->>U: Reset Success
+```
+
+### 4. Password Policy
 - Minimum 8 characters.
 - Must include: Upper, Lower, Numbers, and Special Characters.
 
@@ -77,6 +99,25 @@ All requests must include the `Authorization: Bearer <token>` header (except pub
 | `/auth/login` | POST | `email, password` | Returns tokens & user info |
 | `/auth/refresh` | POST | `refreshToken` | Rotates session tokens |
 | `/auth/logout` | POST | `refreshToken` | Revokes a session |
+| `/auth/forgot-password` | POST | `email` | Generates OTP & sends email |
+| `/auth/verify-otp` | POST | `email, otp` | Verifies the reset OTP |
+| `/auth/reset-password` | POST | `email, otp, password` | Resets the user password |
+
+#### Forgot Password Flow Details
+**1. Request OTP**
+- **Endpoint**: `POST /auth/forgot-password`
+- **Body**: `{ "email": "user@example.com" }`
+- **Response (200 OK)**: `{ "status": "OK", "message": "If an account exists..." }`
+
+**2. Verify OTP**
+- **Endpoint**: `POST /auth/verify-otp`
+- **Body**: `{ "email": "user@example.com", "otp": "123456" }`
+- **Response (200 OK)**: `{ "status": "OK", "message": "OTP verified successfully..." }`
+
+**3. Reset Password**
+- **Endpoint**: `POST /auth/reset-password`
+- **Body**: `{ "email": "user@example.com", "otp": "123456", "password": "NewSecurePassword123!" }`
+- **Response (200 OK)**: `{ "status": "OK", "message": "Password reset successful..." }`
 
 ### 👤 User & Dashboard
 | Endpoint | Method | Description |
