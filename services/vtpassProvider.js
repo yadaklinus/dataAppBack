@@ -7,8 +7,8 @@ const crypto = require('crypto');
  */
 
 const getBaseUrl = () => {
-    const ENV = process.env.NODE_ENV === 'production' ? 'live' : 'sandbox';
-    return ENV === 'live' ? 'https://vtpass.com/api' : 'https://sandbox.vtpass.com/api';
+    //const ENV = process.env.NODE_ENV === 'production' ? 'live' : 'sandbox';
+    return 'https://sandbox.vtpass.com/api';
 };
 
 /**
