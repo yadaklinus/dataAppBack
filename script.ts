@@ -1,4 +1,5 @@
-import 'module-alias/register';
+const moduleAlias = require('module-alias');
+moduleAlias.addAlias('@', __dirname);
 import express, { Request, Response, NextFunction, Application } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
