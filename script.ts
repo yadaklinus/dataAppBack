@@ -119,8 +119,8 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // 10. Start Background Services
 // These are your safety net for failed webhooks and timeouts!
-startTransactionSync();
-startNelloByteStatusJob();
+// startTransactionSync();
+// startNelloByteStatusJob();
 //startMonnifyTransactionSync();
 //startPaystackTransactionSync();
 

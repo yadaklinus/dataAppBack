@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
-const cableProvider = require('@/services/cableProvider');
+const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 const { generateRef } = require('@/lib/crypto')
@@ -18,7 +18,8 @@ const purchaseSubscriptionSchema = z.object({
     cableTV: z.enum(["dstv", "gotv", "startimes", "showmax"]),
     packageCode: z.string().min(1, "Package code is required"),
     smartCardNo: z.string().min(8),
-    phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number")
+    phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
+    amount: z.number().optional() // VTPass renewal may require an explicit amount
 });
 
 /**
@@ -31,47 +32,10 @@ const formatZodError = (error) => {
 
 const getPackages = async (req, res) => {
     try {
-        const data = await cableProvider.fetchPackages();
-
-        // Failsafe if the provider structure changes or fails
-        if (!data || !data.TV_ID) {
-            return res.status(500).json({
-                status: "ERROR",
-                message: "Could not fetch packages from provider"
-            });
-        }
-
-        const rawPackages = data.TV_ID;
-        const sanitizedPackages = {};
-
-        // Iterate dynamically over all providers (DStv, GOtv, Startimes, etc.)
-        for (const [providerName, providerArray] of Object.entries(rawPackages)) {
-
-            sanitizedPackages[providerName] = providerArray.map(provider => {
-                return {
-                    ...provider, // Keep the ID field (e.g., "ID": "dstv")
-                    PRODUCT: provider.PRODUCT.map(product => {
-                        // Destructure to extract the fields you DON'T want
-                        // The 'cleanProduct' variable catches everything else
-                        const {
-                            PRODUCT_DISCOUNT_AMOUNT,
-                            PRODUCT_DISCOUNT,
-                            MINAMOUNT,
-                            MAXAMOUNT,
-                            ...cleanProduct
-                        } = product;
-
-                        return cleanProduct;
-                    })
-                };
-            });
-        }
-
-        // Return the stripped-down JSON to the client
-        return res.status(200).json({
-            status: "OK",
-            data: sanitizedPackages
-        });
+        const { cableTV } = req.query;
+        if (!cableTV) return res.status(400).json({ status: "ERROR", message: "cableTV is required for downloading packages" });
+        const packages = await vtpassProvider.fetchCablePackages(cableTV);
+        return res.status(200).json({ status: "OK", data: packages });
 
     } catch (error) {
         console.error("Fetch Cable Packages Error:", error.message);
@@ -99,7 +63,8 @@ const verifyIUC = async (req, res) => {
     const { cableTV, smartCardNo } = validation.data;
 
     try {
-        const result = await cableProvider.verifySmartCard(cableTV, smartCardNo);
+        const result = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
+
         return res.status(200).json({ status: "OK", data: result });
     } catch (error) {
         return res.status(400).json({ status: "ERROR", message: error.message });
@@ -110,44 +75,33 @@ const verifyIUC = async (req, res) => {
  * Endpoint: Purchase Subscription
  */
 const purchaseSubscription = async (req, res) => {
-    // Validate Request Body
-    const validation = purchaseSubscriptionSchema.safeParse(req.body);
-
-    if (!validation.success) {
-        return res.status(400).json({
-            status: "ERROR",
-            message: formatZodError(validation.error)
-        });
-    }
-
-    const { cableTV, packageCode, smartCardNo, phoneNo } = validation.data;
-    const userId = req.user.id;
-
     try {
-        // 1. Fetch live packages to get current price (Verification of cost)
-        const allPackages = await cableProvider.fetchPackages();
-        const providerKey = cableTV.toUpperCase();
-        // 1. Safely fall back to an empty object if TV_ID is missing
-        const safePackages = allPackages?.TV_ID || {};
+        // Validate Request Body
+        const validation = purchaseSubscriptionSchema.safeParse(req.body);
 
-        // 2. Find the actual key in the object by comparing both as uppercase strings
-        const actualKey = Object.keys(safePackages).find(
-            (key) => key.toUpperCase() === providerKey.toUpperCase()
-        );
-
-        // 3. Extract the array using the matched key, or fallback to an empty array
-        const packageList = actualKey ? safePackages[actualKey] : [];
-
-        const selectedPackage = packageList[0].PRODUCT.find(p => p.PACKAGE_ID === packageCode);
-
-        if (!selectedPackage) {
-            return res.status(404).json({ status: "ERROR", message: "Invalid package code for this provider" });
+        if (!validation.success) {
+            return res.status(400).json({
+                status: "ERROR",
+                message: formatZodError(validation.error)
+            });
         }
 
-        const amountToDeduct = Number(selectedPackage.PACKAGE_AMOUNT);
+        const { cableTV, packageCode, smartCardNo, phoneNo, amount } = validation.data;
+        const userId = req.user.id;
 
-        // 2. Verify customer name (Safety check against stale inputs)
-        const verification = await cableProvider.verifySmartCard(cableTV, smartCardNo);
+        const verification = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
+        const customerName = verification.customer_name;
+
+        const packages = await vtpassProvider.fetchCablePackages(cableTV);
+        const selectedPackage = packages.find(p => p.variation_code === packageCode);
+
+        if (!selectedPackage) {
+            return res.status(404).json({ status: "ERROR", message: "Invalid package code" });
+        }
+
+        // If they pass an amount (e.g., for renewal), verify it against wallet, else use variation amount
+        const amountToDeduct = amount ? Number(amount) : Number(selectedPackage.variation_amount);
+        const packageName = selectedPackage.name;
 
         // 3. Atomic Wallet Deduction
         const result = await prisma.$transaction(async (tx) => {
@@ -168,9 +122,9 @@ const purchaseSubscription = async (req, res) => {
                     metadata: {
                         cableTV,
                         packageCode,
-                        packageName: selectedPackage.PRODUCT_NAME,
+                        packageName: packageName,
                         smartCardNo,
-                        customerName: verification.customer_name,
+                        customerName: customerName,
                         recipient: phoneNo
                     }
                 }
@@ -189,22 +143,33 @@ const purchaseSubscription = async (req, res) => {
 
         // 4. Call Provider
         try {
-            const providerResponse = await cableProvider.subscribe({
+            const providerResponse = await vtpassProvider.buyCableTV(
                 cableTV,
                 packageCode,
                 smartCardNo,
                 phoneNo,
-                requestId: result.requestId
-            });
+                amountToDeduct,
+                result.requestId
+            );
+
+            const finalStatus = providerResponse.isPending ? TransactionStatus.PENDING : TransactionStatus.SUCCESS;
 
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
-                    status: TransactionStatus.SUCCESS,
+                    status: finalStatus,
                     providerReference: providerResponse.orderId,
                     providerResponse: providerResponse.status
                 }
             });
+
+            if (providerResponse.isPending) {
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Cable TV subscription is processing. Please check status history in a moment.",
+                    transactionId: result.requestId
+                });
+            }
 
             // 🟢 Emit WebSocket Event
             const { getIO } = require('@/lib/socket');
@@ -217,7 +182,7 @@ const purchaseSubscription = async (req, res) => {
                     metadata: {
                         cableTV,
                         packageCode,
-                        packageName: selectedPackage.PRODUCT_NAME,
+                        packageName: packageName,
                     }
                 });
             } catch (socketErr) {
@@ -226,7 +191,7 @@ const purchaseSubscription = async (req, res) => {
 
             return res.status(200).json({
                 status: "OK",
-                message: `${selectedPackage.PRODUCT_NAME} activated successfully for ${verification.customer_name}`,
+                message: `${packageName} activated successfully for ${customerName}`,
                 transactionId: result.requestId
             });
 
@@ -270,5 +235,6 @@ const purchaseSubscription = async (req, res) => {
         });
     }
 };
+
 
 module.exports = { verifyIUC, purchaseSubscription, getPackages };

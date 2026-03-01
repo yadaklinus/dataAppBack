@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
-const electricityProvider = require('@/services/electricityProvider');
+const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef } = require('@/lib/crypto')
 const { isNetworkError } = require('@/lib/financialSafety');
@@ -32,32 +32,10 @@ const formatZodError = (error) => {
 
 const getDiscos = async (req, res) => {
     try {
-        const data = await electricityProvider.fetchDiscos();
-        if (!data || !data.ELECTRIC_COMPANY) {
-            return res.status(500).json({
-                status: "ERROR",
-                message: "Could not fetch discos from provider"
-            });
-        }
-
-        /**
-         * BUILDER TRANSFORMATION:
-         * We iterate through the object keys (EKO_ELECTRIC, etc.),
-         * extract the ID and NAME, and set universal limits.
-         */
-        const formattedDiscos = Object.values(data.ELECTRIC_COMPANY).map(discoArray => {
-            const disco = discoArray[0];
-            return {
-                id: disco.ID,
-                name: disco.NAME,
-                minAmount: 1000,
-                maxAmount: 200000
-            };
-        });
-
+        const vtpassDiscos = await vtpassProvider.fetchElectricityDiscos();
         return res.status(200).json({
             status: "OK",
-            data: formattedDiscos
+            data: vtpassDiscos
         });
     } catch (error) {
         console.error("Fetch Discos Error:", error.message);
@@ -84,7 +62,8 @@ const verifyMeterNumber = async (req, res) => {
     const { discoCode, meterNo, meterType } = validation.data;
 
     try {
-        const result = await electricityProvider.verifyMeter(discoCode, meterNo, meterType);
+        const typeStr = meterType === '01' ? 'prepaid' : 'postpaid';
+        const result = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
 
         return res.status(200).json({ status: "OK", data: result });
     } catch (error) {
@@ -112,7 +91,8 @@ const purchaseElectricity = async (req, res) => {
 
     try {
         // 1. Double-check meter (Safety)
-        const verification = await electricityProvider.verifyMeter(discoCode, meterNo, meterType);
+        const typeStr = meterType === '01' ? 'prepaid' : 'postpaid';
+        const verification = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
 
         // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
@@ -155,30 +135,40 @@ const purchaseElectricity = async (req, res) => {
 
         // 3. Call External Provider
         try {
-            const providerResponse = await electricityProvider.payBill({
+            const providerTypeStr = meterType === '01' ? 'prepaid' : 'postpaid';
+            const providerResponse = await vtpassProvider.payElectricityBill(
                 discoCode,
-                meterType,
+                providerTypeStr,
                 meterNo,
-                amount: billAmount,
+                billAmount,
                 phoneNo,
-                requestId: result.requestId
-            });
+                result.requestId
+            );
 
-            console.log("Gotten From Controller", providerResponse)
+            console.log("Gotten From Provider", providerResponse)
 
-            // 4. Update Transaction Success
+            const finalStatus = providerResponse.isPending ? TransactionStatus.PENDING : TransactionStatus.SUCCESS;
+
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
-                    status: TransactionStatus.SUCCESS,
+                    status: finalStatus,
                     providerReference: providerResponse.orderId,
                     providerStatus: providerResponse.status || providerResponse.transactionstatus,
                     metadata: {
                         ...result.transaction.metadata,
-                        token: providerResponse.metertoken
+                        token: providerResponse.token || providerResponse.metertoken
                     }
                 }
             });
+
+            if (providerResponse.isPending) {
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Electricity payment is processing. Please check status history for your token.",
+                    transactionId: result.requestId
+                });
+            }
 
             // 🟢 Emit WebSocket Event
             const { getIO } = require('@/lib/socket');
@@ -191,7 +181,7 @@ const purchaseElectricity = async (req, res) => {
                     metadata: {
                         discoCode,
                         meterNo,
-                        token: providerResponse.metertoken
+                        token: providerResponse.token || providerResponse.metertoken
                     }
                 });
             } catch (socketErr) {
@@ -201,7 +191,7 @@ const purchaseElectricity = async (req, res) => {
             return res.status(200).json({
                 status: "OK",
                 message: "Electricity bill paid successfully",
-                token: providerResponse.token,
+                token: providerResponse.token || providerResponse.metertoken,
                 customerName: verification.customer_name,
                 transactionId: result.requestId
             });

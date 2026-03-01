@@ -1,10 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('@/lib/prisma');
 const paymentProvider = require('@/services/paymentProvider');
-const airtimeProvider = require('@/services/airtimeProvider');
-const dataProvider = require('@/services/dataProvider');
-const electricityProvider = require('@/services/electricityProvider');
-const cableProvider = require('@/services/cableProvider');
+const vtpassProvider = require('@/services/vtpassProvider');
 const educationProvider = require('@/services/educationProvider');
 const pinProvider = require('@/services/pinProvider');
 
@@ -15,13 +12,16 @@ const { getWalletCreditAmount } = require('@/lib/paymentUtils');
  * Provider Mapping for Service Transactions
  */
 const PROVIDERS = {
-    [TransactionType.AIRTIME]: airtimeProvider,
-    [TransactionType.DATA]: dataProvider,
-    [TransactionType.ELECTRICITY]: electricityProvider,
-    [TransactionType.CABLE_TV]: cableProvider,
     [TransactionType.EDUCATION]: educationProvider,
     [TransactionType.RECHARGE_PIN]: pinProvider
 };
+
+const VTPASS_TYPES = [
+    TransactionType.AIRTIME,
+    TransactionType.DATA,
+    TransactionType.ELECTRICITY,
+    TransactionType.CABLE_TV
+];
 
 /**
  * Background Sync Job
@@ -52,9 +52,13 @@ const startTransactionSync = () => {
                     if (txn.type === TransactionType.WALLET_FUNDING) {
                         await reconcileFunding(txn);
                     }
-                    // --- CASE B: SERVICES (Airtime, Data, etc) ---
+                    // --- CASE B: VTPASS SERVICES ---
+                    else if (VTPASS_TYPES.includes(txn.type)) {
+                        await reconcileVTPassService(txn);
+                    }
+                    // --- CASE C: LEGACY SERVICES ---
                     else if (PROVIDERS[txn.type]) {
-                        await reconcileService(txn);
+                        await reconcileLegacyService(txn);
                     }
                 } catch (err) {
                     console.error(`[Error] Failed reconciling Ref ${txn.reference}:`, err.message);
@@ -106,10 +110,45 @@ const reconcileFunding = async (txn) => {
 };
 
 /**
- * Reconcile Service Transactions (Airtime, Data, etc)
+ * Reconcile VTPass Service Transactions
  */
-const reconcileService = async (txn) => {
-    console.log(`[Reconcile] ${txn.type} Ref: ${txn.reference}`);
+const reconcileVTPassService = async (txn) => {
+    console.log(`[Reconcile] VTPASS ${txn.type} Ref: ${txn.reference}`);
+    const result = await vtpassProvider.queryTransaction(txn.reference).catch(() => null);
+
+    if (!result) return; // Wait for next cycle
+
+    if (result.status === "SUCCESS") {
+        await prisma.transaction.update({
+            where: { id: txn.id },
+            data: { status: TransactionStatus.SUCCESS }
+        });
+        console.log(`[Success] ✅ Finalized ${txn.type} Ref: ${txn.reference}`);
+    }
+    else if (result.status === "FAILED") {
+        console.log(`[Failure] ❌ Provider failed ${txn.type} Ref: ${txn.reference}. Triggering REFUND.`);
+
+        await prisma.$transaction([
+            prisma.transaction.update({
+                where: { id: txn.id },
+                data: { status: TransactionStatus.FAILED }
+            }),
+            prisma.wallet.update({
+                where: { userId: txn.userId },
+                data: {
+                    balance: { increment: txn.amount },
+                    totalSpent: { decrement: txn.amount }
+                }
+            })
+        ]);
+    }
+};
+
+/**
+ * Reconcile Legacy Service Transactions (Education, etc)
+ */
+const reconcileLegacyService = async (txn) => {
+    console.log(`[Reconcile] LEGACY ${txn.type} Ref: ${txn.reference}`);
     const provider = PROVIDERS[txn.type];
 
     // We try to query by providerReference first, else fallback to internal reference

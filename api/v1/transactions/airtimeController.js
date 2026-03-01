@@ -1,5 +1,5 @@
 const prisma = require('@/lib/prisma');
-const airtimeProvider = require('@/services/airtimeProvider');
+const vtpassProvider = require('@/services/vtpassProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
@@ -14,16 +14,20 @@ const { isNetworkError } = require('@/lib/financialSafety');
 const purchaseAirtimeSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
     amount: z.number(),
-    phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
+    phoneNumber: z.string()
 });
 
 const purchaseAirtime = async (req, res) => {
+    console.log("Airtime Purchase Request:", req.body);
     const parsed = purchaseAirtimeSchema.safeParse(req.body);
+    console.log("Airtime Purchase Request:", parsed.success);
     if (!parsed.success) {
         return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
     }
 
     const { network, amount, phoneNumber } = parsed.data;
+
+    console.log("Airtime Purchase Request:", network, amount, phoneNumber);
     const userId = req.user.id;
 
     if (!network || !amount || !phoneNumber) {
@@ -32,12 +36,12 @@ const purchaseAirtime = async (req, res) => {
 
     // --- BUILDER ADDITION: PREFIX VALIDATION ---
     const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
-    if (!isNetworkMatch) {
-        return res.status(400).json({
-            status: "ERROR",
-            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
-        });
-    }
+    // if (!isNetworkMatch) {
+    //     return res.status(400).json({
+    //         status: "ERROR",
+    //         message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
+    //     });
+    // }
 
     const cleanPhone = normalizePhoneNumber(phoneNumber);
 
@@ -88,21 +92,31 @@ const purchaseAirtime = async (req, res) => {
 
         // 3. Call External Provider
         try {
-            const providerResponse = await airtimeProvider.buyAirtime(
+            const providerResponse = await vtpassProvider.buyAirtime(
                 network,
                 airtimeAmount,
                 cleanPhone,
                 result.requestId
             );
 
+            const finalStatus = providerResponse.isPending ? TransactionStatus.PENDING : TransactionStatus.SUCCESS;
+
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
-                    status: TransactionStatus.SUCCESS,
+                    status: finalStatus,
                     providerReference: providerResponse.orderId || providerResponse.transactionid,
                     providerStatus: providerResponse.status || providerResponse.transactionstatus
                 }
             });
+
+            if (providerResponse.isPending) {
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Airtime purchase is processing. Please check status history in a moment.",
+                    transactionId: result.requestId
+                });
+            }
 
             // 🟢 Emit WebSocket Event for Real-time Update
             const { getIO } = require('@/lib/socket');
@@ -179,16 +193,17 @@ const getAirtimeStatus = async (req, res) => {
 
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {
-                const providerStatus = await airtimeProvider.queryTransaction(txn.providerReference);
+                const queryResult = await vtpassProvider.queryTransaction(txn.reference).catch(() => null);
 
-                if (providerStatus.statuscode === "200") {
+                // Ignore PENDING status (do nothing)
+                if (queryResult && queryResult.status === "SUCCESS") {
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
                         data: { status: TransactionStatus.SUCCESS },
                         include: { user: { select: { fullName: true } } }
                     });
                 }
-                else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(providerStatus.status)) {
+                else if (queryResult && queryResult.status === "FAILED") {
                     const updatedData = await prisma.$transaction([
                         prisma.transaction.update({
                             where: { id: txn.id },

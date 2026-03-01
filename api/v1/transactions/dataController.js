@@ -1,5 +1,5 @@
 const prisma = require('@/lib/prisma');
-const dataProvider = require('@/services/dataProvider');
+const vtpassProvider = require('@/services/vtpassProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
@@ -9,18 +9,16 @@ const { isNetworkError } = require('@/lib/financialSafety');
 const purchaseDataSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
     planId: z.string().min(1).max(20),
-    phoneNumber: z.string().regex(/^(\+?234|0)[7-9][0-1]\d{8}$/),
+    phoneNumber: z.string()
 });
 /**
  * Fetch available plans (Selling Price only)
+ * If provider=VTPASS is passed in query, fetch from VTPass
  */
 const getAvailablePlans = async (req, res) => {
     try {
-        const plans = await dataProvider.fetchAvailablePlans();
-        return res.status(200).json({
-            status: "OK",
-            data: plans
-        });
+        const plans = await vtpassProvider.fetchAllDataPlansMapped();
+        return res.status(200).json(plans);
     } catch (error) {
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
@@ -39,6 +37,8 @@ const purchaseData = async (req, res) => {
 
 
     const { network, planId, phoneNumber } = parsed.data;
+
+    console.log("Data Purchase Request:", network, planId, phoneNumber);
     const userId = req.user.id;
 
     if (!network || !planId || !phoneNumber) {
@@ -47,52 +47,27 @@ const purchaseData = async (req, res) => {
 
     // --- BUILDER ADDITION: PREFIX VALIDATION ---
     const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
-    if (!isNetworkMatch) {
-        return res.status(400).json({
-            status: "ERROR",
-            message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
-        });
-    }
+    // if (!isNetworkMatch) {
+    //     return res.status(400).json({
+    //         status: "ERROR",
+    //         message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
+    //     });
+    // }
 
     const cleanPhone = normalizePhoneNumber(phoneNumber);
 
     try {
-        const allPlans = await dataProvider.fetchAvailablePlans();
         let selectedPlan = null;
+        let sellingPrice = 0;
+        let planName = '';
 
-        const inputNet = network.toUpperCase();
-        let networkKey;
-
-        if (inputNet === "MTN") {
-            networkKey = "MTN";
-        } else if (inputNet === "9MOBILE") {
-            networkKey = "m_9mobile";
-        } else {
-            networkKey = inputNet.charAt(0) + inputNet.slice(1).toLowerCase();
-        }
-
-        const networkGroups = allPlans.MOBILE_NETWORK?.[networkKey] || [];
-
-        for (const group of networkGroups[0].PRODUCT) {
-            const p = group;
-            const found = (
-                String(p.PRODUCT_CODE) === String(planId) ||
-                String(p.PRODUCT_ID) === String(planId)
-            );
-            if (found) {
-                selectedPlan = p;
-                break;
-            }
-        }
-
+        const allPlans = await vtpassProvider.fetchDataPlans(network);
+        selectedPlan = allPlans.find(p => String(p.variation_code) === String(planId));
         if (!selectedPlan) {
-            return res.status(404).json({
-                status: "ERROR",
-                message: "Invalid data plan selected"
-            });
+            return res.status(404).json({ status: "ERROR", message: "Invalid data plan selected" });
         }
-
-        const sellingPrice = selectedPlan.SELLING_PRICE;
+        sellingPrice = selectedPlan.SELLING_PRICE;
+        planName = selectedPlan.name;
 
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
@@ -113,7 +88,7 @@ const purchaseData = async (req, res) => {
                     metadata: {
                         network,
                         recipient: cleanPhone,
-                        planName: selectedPlan.PRODUCT_NAME,
+                        planName: planName,
                         planId: planId
                     }
                 }
@@ -131,21 +106,31 @@ const purchaseData = async (req, res) => {
         });
 
         try {
-            const providerResponse = await dataProvider.buyData(
+            const providerResponse = await vtpassProvider.buyData(
                 network,
-                planId,
+                planId, // For VTPass, planId is the variationCode
                 cleanPhone,
                 result.requestId
             );
 
+            const finalStatus = providerResponse.isPending ? TransactionStatus.PENDING : TransactionStatus.SUCCESS;
+
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
-                    status: TransactionStatus.SUCCESS,
+                    status: finalStatus,
                     providerReference: providerResponse.orderId || providerResponse.transactionid,
                     providerStatus: providerResponse.status || providerResponse.transactionstatus
                 }
             });
+
+            if (providerResponse.isPending) {
+                return res.status(202).json({
+                    status: "PENDING",
+                    message: "Data purchase is processing. Please check status history in a moment.",
+                    transactionId: result.requestId
+                });
+            }
 
             // 🟢 Emit WebSocket Event
             const { getIO } = require('@/lib/socket');
@@ -155,7 +140,7 @@ const purchaseData = async (req, res) => {
                     type: 'DATA',
                     amount: sellingPrice,
                     reference: result.requestId,
-                    metadata: { planName: selectedPlan.PRODUCT_NAME }
+                    metadata: { planName: planName }
                 });
             } catch (socketErr) {
                 console.error("[Socket Error]", socketErr.message);
@@ -163,7 +148,7 @@ const purchaseData = async (req, res) => {
 
             return res.status(200).json({
                 status: "OK",
-                message: `Successfully sent ${selectedPlan.PRODUCT_NAME} to ${cleanPhone}`,
+                message: `Successfully sent ${planName} to ${cleanPhone}`,
                 transactionId: result.requestId
             });
 
@@ -217,16 +202,17 @@ const getDataStatus = async (req, res) => {
 
         if (txn.status === TransactionStatus.PENDING && txn.providerReference) {
             try {
-                const providerStatus = await dataProvider.queryTransaction(txn.providerReference);
+                const queryResult = await vtpassProvider.queryTransaction(txn.reference).catch(() => null);
 
-                if (providerStatus.statuscode === "200") {
+                // Ignore PENDING status (do nothing)
+                if (queryResult && queryResult.status === "SUCCESS") {
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
                         data: { status: TransactionStatus.SUCCESS },
                         include: { user: { select: { fullName: true, email: true } } }
                     });
                 }
-                else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(providerStatus.status)) {
+                else if (queryResult && queryResult.status === "FAILED") {
                     const updatedData = await prisma.$transaction([
                         prisma.transaction.update({
                             where: { id: txn.id },
