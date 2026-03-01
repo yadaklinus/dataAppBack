@@ -300,6 +300,60 @@ const fetchCablePackages = async (cableTV) => {
 };
 
 /**
+ * Fetch all available cable packages mapped to standard format
+ */
+const fetchAllCablePackagesMapped = async () => {
+    const cables = [
+        { key: 'DSTV', name: 'DStv', id: 'dstv' },
+        { key: 'GOTV', name: 'GOtv', id: 'gotv' },
+        { key: 'STARTIMES', name: 'Startimes', id: 'startimes' },
+        { key: 'SHOWMAX', name: 'Showmax', id: 'showmax' }
+    ];
+
+    const results = await Promise.all(
+        cables.map(async (cable) => {
+            try {
+                const packages = await fetchCablePackages(cable.key);
+                const products = packages.map((pkg) => ({
+                    PACKAGE_ID: pkg.variation_code,
+                    PACKAGE_NAME: pkg.name,
+                    PACKAGE_AMOUNT: pkg.variation_amount
+                }));
+                return {
+                    cableKey: cable.name,
+                    data: [
+                        {
+                            ID: cable.id,
+                            PRODUCT: products
+                        }
+                    ]
+                };
+            } catch (err) {
+                return {
+                    cableKey: cable.name,
+                    data: [
+                        {
+                            ID: cable.id,
+                            PRODUCT: []
+                        }
+                    ]
+                };
+            }
+        })
+    );
+
+    const cableData = {};
+    for (const res of results) {
+        cableData[res.cableKey] = res.data;
+    }
+
+    return {
+        status: "OK",
+        data: cableData
+    };
+};
+
+/**
  * Verify SmartCard / IUC Number
  */
 const verifySmartCard = async (cableTV, smartCardNo) => {
@@ -354,6 +408,7 @@ const buyCableTV = async (cableTV, packageCode, smartCardNo, phoneNo, amount, re
         });
 
         const data = response.data;
+        console.log("VTPass Cable Response:", data);
         return handlePurchaseResponse(data, requestId, "Cable TV subscription failed on VTPass");
     } catch (error) {
         console.error("VTPass Cable Error:", error.response?.data || error.message);
@@ -487,6 +542,7 @@ module.exports = {
     fetchDataPlans,
     fetchAllDataPlansMapped,
     fetchCablePackages,
+    fetchAllCablePackagesMapped,
     verifySmartCard,
     buyCableTV,
     verifyMeter,

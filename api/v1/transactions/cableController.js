@@ -32,10 +32,8 @@ const formatZodError = (error) => {
 
 const getPackages = async (req, res) => {
     try {
-        const { cableTV } = req.query;
-        if (!cableTV) return res.status(400).json({ status: "ERROR", message: "cableTV is required for downloading packages" });
-        const packages = await vtpassProvider.fetchCablePackages(cableTV);
-        return res.status(200).json({ status: "OK", data: packages });
+        const packages = await vtpassProvider.fetchAllCablePackagesMapped();
+        return res.status(200).json(packages);
 
     } catch (error) {
         console.error("Fetch Cable Packages Error:", error.message);
@@ -87,6 +85,7 @@ const purchaseSubscription = async (req, res) => {
         }
 
         const { cableTV, packageCode, smartCardNo, phoneNo, amount } = validation.data;
+        console.log("Cable TV Purchase Request:", cableTV, packageCode, smartCardNo, phoneNo, amount);
         const userId = req.user.id;
 
         const verification = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
@@ -159,7 +158,7 @@ const purchaseSubscription = async (req, res) => {
                 data: {
                     status: finalStatus,
                     providerReference: providerResponse.orderId,
-                    providerResponse: providerResponse.status
+                    providerStatus: providerResponse.status
                 }
             });
 
