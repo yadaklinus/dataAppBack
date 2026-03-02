@@ -117,7 +117,8 @@ const purchaseElectricity = async (req, res) => {
                         customerName: verification.customer_name,
                         address: verification.customer_address,
                         token: "",
-                        recipient: phoneNo
+                        recipient: phoneNo,
+                        unit: ""
                     }
                 }
             });
@@ -157,7 +158,8 @@ const purchaseElectricity = async (req, res) => {
                     providerStatus: providerResponse.status || providerResponse.transactionstatus,
                     metadata: {
                         ...result.transaction.metadata,
-                        token: providerResponse.token || providerResponse.metertoken
+                        token: providerResponse.token || providerResponse.metertoken,
+                        units: providerResponse.units
                     }
                 }
             });
@@ -192,6 +194,7 @@ const purchaseElectricity = async (req, res) => {
                 status: "OK",
                 message: "Electricity bill paid successfully",
                 token: providerResponse.token || providerResponse.metertoken,
+                units: providerResponse.units,
                 customerName: verification.customer_name,
                 transactionId: result.requestId
             });

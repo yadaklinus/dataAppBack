@@ -48,6 +48,7 @@ const handlePurchaseResponse = (data, requestId, defaultErrorMsg) => {
             orderId: data.content?.transactions?.transactionId || requestId,
             status: txStatus,
             token: data.token || data.purchased_code || data.metertoken || null,
+            units: data.units || null,
             provider: 'VTPASS'
         };
     }
