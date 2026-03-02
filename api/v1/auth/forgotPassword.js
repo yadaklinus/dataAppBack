@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const sendEmail = require('@/lib/mailer');
+const { generateOtpEmailTemplate } = require('@/lib/emailTemplates');
 const crypto = require('crypto');
 
 const forgotPasswordSchema = z.object({
@@ -49,9 +50,9 @@ const forgotPassword = async (req, res) => {
         // Send Email
         await sendEmail({
             to: email,
-            subject: "Password Reset OTP",
+            subject: "Data Padi - Password Reset OTP",
             text: `Your OTP for password reset is: ${otp}. It expires in 10 minutes.`,
-            html: `<p>Your OTP for password reset is: <strong>${otp}</strong>.</p><p>It expires in 10 minutes.</p>`
+            html: generateOtpEmailTemplate(otp, user.fullName || "Valued Customer")
         });
 
         res.status(200).json({
