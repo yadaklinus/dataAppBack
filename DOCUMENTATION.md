@@ -1,6 +1,6 @@
-# Data Padi Backend Documentation
+# Mufti Pay Backend Documentation
 
-Welcome to the official documentation for the **Data Padi Backend**. This is a high-performance, secure Node.js API designed for digital services like Airtime, Data, Utility bills, and Unified Payment processing.
+Welcome to the official documentation for the **Mufti Pay Backend**. This is a high-performance, secure Node.js API designed for digital services like Airtime, Data, Utility bills, and Unified Payment processing.
 
 ---
 
@@ -32,7 +32,7 @@ graph TD
 
 ## 🔐 Security & Authentication
 
-Data Padi uses a multi-layered security approach.
+Mufti Pay uses a multi-layered security approach.
 
 ### 1. Dual-Token System
 We implement **Access Tokens** (15m expiry) and **Refresh Tokens** (7d expiry). 

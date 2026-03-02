@@ -101,7 +101,7 @@ const createAccount = async (req, res) => {
          * We split full name if needed, or send as is if Paystack allows.
          * Paystack /dedicated_account/assign expects first_name and last_name.
          */
-        const nameParts = (user.fullName || "Data Padi User").split(" ");
+        const nameParts = (user.fullName || "Mufti Pay User").split(" ");
         const first_name = nameParts[0];
         const last_name = nameParts.slice(1).join(" ") || "User";
 

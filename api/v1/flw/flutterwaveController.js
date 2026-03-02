@@ -55,9 +55,9 @@ const createAccount = async (req, res) => {
     const validation = kycSchema.safeParse(req.body);
 
     if (!validation.success) {
-        return res.status(400).json({ 
-            status: "ERROR", 
-            message: formatZodError(validation.error) 
+        return res.status(400).json({
+            status: "ERROR",
+            message: formatZodError(validation.error)
         });
     }
 
@@ -66,7 +66,7 @@ const createAccount = async (req, res) => {
 
     try {
         // 1. Fetch user with existing KYC state
-        const user = await prisma.user.findUnique({ 
+        const user = await prisma.user.findUnique({
             where: { id: userId },
             include: { kycData: true }
         });
@@ -75,14 +75,14 @@ const createAccount = async (req, res) => {
 
         // 2. Idempotency Check
         if (user.kycData?.virtualAccountNumber) {
-            return res.status(200).json({ 
-                status: "OK", 
-                message: "Dedicated account already exists.", 
+            return res.status(200).json({
+                status: "OK",
+                message: "Dedicated account already exists.",
                 data: {
                     bank: user.kycData.bankName,
                     accountNumber: user.kycData.virtualAccountNumber,
-                    accountName: `Data Padi - ${user.fullName}`
-                } 
+                    accountName: `Mufti Pay - ${user.fullName}`
+                }
             });
         }
 
@@ -109,32 +109,32 @@ const createAccount = async (req, res) => {
             prisma.kycData.update({
                 where: { userId },
                 data: {
-                    encryptedBvn: encryptedBvn, 
+                    encryptedBvn: encryptedBvn,
                     virtualAccountNumber: flwAccount.account_number,
                     bankName: flwAccount.bank_name,
-                    accountReference: flwAccount.order_ref, 
+                    accountReference: flwAccount.order_ref,
                     status: 'VERIFIED',
                     verifiedAt: new Date()
                 }
             }),
-            prisma.user.update({ 
-                where: { id: userId }, 
-                data: { isKycVerified: true } 
+            prisma.user.update({
+                where: { id: userId },
+                data: { isKycVerified: true }
             })
         ]);
 
-        res.status(200).json({ 
-            status: "OK", 
-            message: "Dedicated bank account activated", 
+        res.status(200).json({
+            status: "OK",
+            message: "Dedicated bank account activated",
             data: {
                 bank: flwAccount.bank_name,
                 accountNumber: flwAccount.account_number,
-                accountName: `Data Padi - ${user.fullName}`
-            } 
+                accountName: `Mufti Pay - ${user.fullName}`
+            }
         });
     } catch (error) {
         console.error("[Flutterwave KYC Error]:", error.message);
-        
+
         // Handle common FLW errors (like BVN mismatch on their end)
         const errorMessage = error.message?.includes("invalid") || error.message?.includes("mismatch")
             ? "Identity verification failed. Please ensure your BVN is correct."

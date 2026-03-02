@@ -146,7 +146,7 @@ const createVirtualAccount = async (params) => {
     const accountReference = `VA-REF-${Date.now()}-${userId}`;
 
     // BUILDER TIP: When a BVN is provided, Monnify ignores custom prefixes 
-    // like "Data Padi -". It's better to send the raw fullName to ensure 
+    // like "Mufti Pay -". It's better to send the raw fullName to ensure 
     // the KYC matching algorithm passes.
     const response = await axios.post(`${MONNIFY_BASE_URL}/api/v2/bank-transfer/reserved-accounts`, {
         accountReference: accountReference,

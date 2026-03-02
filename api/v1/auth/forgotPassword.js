@@ -50,7 +50,7 @@ const forgotPassword = async (req, res) => {
         // Send Email
         await sendEmail({
             to: email,
-            subject: "Data Padi - Password Reset OTP",
+            subject: "Mufti Pay - Password Reset OTP",
             text: `Your OTP for password reset is: ${otp}. It expires in 10 minutes.`,
             html: generateOtpEmailTemplate(otp, user.fullName || "Valued Customer")
         });

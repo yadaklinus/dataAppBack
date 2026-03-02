@@ -94,8 +94,8 @@ const initializePayment = async (userId, amount, email, fullName) => {
             redirect_url,
             payment_options: "card, banktransfer, ussd",
             customer: { email, name: fullName },
-            customizations: {
-                title: "Data Padi Wallet Funding",
+            body: {
+                title: "Mufti Pay Wallet Funding",
                 description: "Wallet Top-up"
             }
         },
@@ -120,11 +120,11 @@ const createVirtualAccount = async (params) => {
             email: email,
             is_permanent: true,
             bvn: bvn,
-            phonenumber: phoneNumber,
-            firstname: "Data Padi",
-            lastname: fullName.toUpperCase(),
+            phonenumber: "08000000000",
+            firstname: "Mufti Pay",
+            lastname: fullName.split(" ")[1] || "User",
             tx_ref: tx_ref,
-            narration: `Data Padi - ${fullName}`,
+            narration: `Mufti Pay - ${fullName}`,
         },
         ...flwHeader
     };

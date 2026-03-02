@@ -38,7 +38,7 @@ const initGatewayFunding = async (req, res) => {
             userId,
             amount,
             user.email,
-            user.fullName || "Data Padi User"
+            user.fullName || "Mufti Pay User"
         );
 
         // 2. Create Pending Transaction Record

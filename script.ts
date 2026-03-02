@@ -79,7 +79,7 @@ app.get("/", (req: Request, res: Response) => {
     const memoryUsage = process.memoryUsage();
     res.json({
         status: "OK",
-        service: "Data Padi API",
+        service: "Mufti Pay API",
         version: "1.0.0",
         uptime: `${Math.floor(process.uptime())}s`,
         memory: {
@@ -133,7 +133,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 // initSocket(httpServer);
 
 app.listen(PORT, () => {
-    console.log(`[Server] Data Padi running on port ${PORT}`);
+    console.log(`[Server] Mufti Pay running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
     console.log(`[Socket] Real-time engine initialized.`);
 });
