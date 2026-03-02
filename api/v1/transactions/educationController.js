@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
-const eduProvider = require('@/services/educationProvider');
+const eduProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
@@ -51,8 +51,8 @@ const getPackages = async (req, res) => {
     const { provider } = validation.data;
 
     try {
-        const result = await eduProvider.fetchPackages(provider);
-        return res.status(200).json({ status: "OK", data: result });
+        const result = await eduProvider.fetchEducationPackages(provider);
+        return res.status(200).json(result);
     } catch (error) {
         return res.status(400).json({ status: "ERROR", message: error.message });
     }
@@ -79,6 +79,7 @@ const verifyJamb = async (req, res) => {
 };
 
 const purchasePin = async (req, res) => {
+    console.log(req.body)
     const validation = purchasePinSchema.safeParse(req.body);
 
     if (!validation.success) {
@@ -89,15 +90,20 @@ const purchasePin = async (req, res) => {
     }
 
     const { provider, examType, phoneNo, profileId } = validation.data;
+    console.log(provider, examType, phoneNo, profileId)
     const userId = req.user.id;
 
     try {
-        // 1. Fetch Authoritative Pricing from Provider
-        const packageData = await eduProvider.fetchPackages(provider);
+        // 1. Fetch Authoritative Pricing from Provider (VTPass wraps it in EXAM_TYPE array for legacy compatibility)
+        const packageData = await eduProvider.fetchEducationPackages(provider);
         const availablePackages = packageData.EXAM_TYPE || [];
+
+        console.log("availablePackages", availablePackages)
 
         // Match the requested examType with the provider's PRODUCT_CODE
         const selectedPkg = availablePackages.find(p => p.PRODUCT_CODE === examType);
+
+        console.log("selectedPkg", selectedPkg)
 
         if (!selectedPkg) {
             return res.status(404).json({
@@ -106,12 +112,27 @@ const purchasePin = async (req, res) => {
             });
         }
 
-        // Server sets the absolute truth for the cost. 
-        // Note: Add your platform markup fee here if you want to make a profit!
-        // Example: const pinCost = Number(selectedPkg.PRODUCT_AMOUNT) + 150;
-        const pinCost = Number(selectedPkg.PRODUCT_AMOUNT);
+        // Selected package contains the user selling price (VTPass amount + our markup)
+        // But we must pay VTPass exactly what they charge, which is PRODUCT_AMOUNT
+        const pinCost = Number(selectedPkg.SELLING_PRICE);
+        const providerCost = Number(selectedPkg.PRODUCT_AMOUNT);
 
-        // 2. Database Atomic Operation
+        // 2. JAMB Profile Verification (Auto-fetch name)
+        let customerName = null;
+        if (provider === 'JAMB' && profileId) {
+            try {
+                // Verify the profile ID to ensure it's valid before charging them
+                const verifyResult = await eduProvider.verifyJambProfile(profileId, 'utme');
+                customerName = verifyResult.customer_name;
+            } catch (err) {
+                return res.status(400).json({
+                    status: "ERROR",
+                    message: "JAMB profile verification failed: " + err.message
+                });
+            }
+        }
+
+        // 3. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
@@ -120,6 +141,18 @@ const purchasePin = async (req, res) => {
             }
 
             const requestId = generateRef("EDU");
+
+            // Build metadata
+            const txMetadata = {
+                provider,
+                examType,
+                recipient: phoneNo,
+                profileId: profileId || null
+            };
+            if (customerName) {
+                txMetadata.customerName = customerName;
+            }
+
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -127,12 +160,7 @@ const purchasePin = async (req, res) => {
                     type: TransactionType.EDUCATION,
                     status: TransactionStatus.PENDING,
                     reference: requestId,
-                    metadata: {
-                        provider,
-                        examType,
-                        recipient: phoneNo,
-                        profileId: profileId || null
-                    }
+                    metadata: txMetadata
                 }
             });
 
@@ -147,12 +175,14 @@ const purchasePin = async (req, res) => {
             return { transaction, requestId };
         });
 
-        // 3. Call External Provider
+        // 3. Call External Provider (VTPass)
         try {
-            const providerResponse = await eduProvider.buyPin(
+            const providerResponse = await eduProvider.buyEducationPin(
                 provider.toUpperCase(),
                 examType,
                 phoneNo,
+                profileId, // Specifically used for JAMB
+                providerCost, // Amount VTPass expects
                 result.requestId
             );
 
@@ -162,9 +192,11 @@ const purchasePin = async (req, res) => {
                 data: {
                     status: TransactionStatus.SUCCESS,
                     providerReference: providerResponse.orderId,
+                    providerStatus: providerResponse.status,
                     metadata: {
                         ...result.transaction.metadata,
-                        cardDetails: providerResponse.cardDetails
+                        cardDetails: providerResponse.cardDetails,
+                        webhookPayload: providerResponse
                     }
                 }
             });

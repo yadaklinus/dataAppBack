@@ -36,10 +36,11 @@ model User {
   lockoutUntil        DateTime?
 
   // Relationships
-  wallet        Wallet? // Moved balance here
-  kycData       KycData?
-  transactions  Transaction[]
-  refreshTokens RefreshToken[]
+  wallet         Wallet? // Moved balance here
+  kycData        KycData?
+  transactions   Transaction[]
+  flightRequests FlightBookingRequest[]
+  refreshTokens  RefreshToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -108,6 +109,7 @@ enum TransactionType {
   ELECTRICITY
   WALLET_FUNDING
   EDUCATION
+  FLIGHT_BOOKING
 }
 
 enum TransactionStatus {
@@ -136,7 +138,8 @@ model Transaction {
 
   printedPins RechargePin[]
 
-  createdAt DateTime @default(now())
+  createdAt            DateTime              @default(now())
+  flightBookingRequest FlightBookingRequest?
 
   @@index([userId, status, type, createdAt])
 }
@@ -180,4 +183,54 @@ model PasswordResetOTP {
   createdAt DateTime @default(now())
 
   @@index([email])
+}
+
+// --- FLIGHT BOOKING SYSTEM ---
+
+enum FlightRequestStatus {
+  PENDING
+  AWAITING_PAYMENT
+  PAID_PENDING_TICKET
+  COMPLETED
+  CANCELLED
+}
+
+model FlightBookingRequest {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  origin        String
+  destination   String
+  departureDate DateTime
+  returnDate    DateTime?
+
+  // Passenger Breakdown
+  adults   Int @default(1)
+  children Int @default(0)
+  infants  Int @default(0)
+
+  // Detailed Passenger Info (Full Names, Gender, DOB, Passport No, etc.)
+  passengerDetails Json?
+
+  flightClass String @default("ECONOMY") // ECONOMY, BUSINESS, FIRST
+
+  // User's anticipated budget 
+  expectedPrice Decimal? @db.Decimal(15, 2)
+
+  // Admin fields
+  quotedPrice   Decimal? @db.Decimal(15, 2)
+  adminNotes    String?
+  ticketDetails String? // Could be PNR, JSON string, or link to PDF
+
+  status FlightRequestStatus @default(PENDING)
+
+  // Link to payment if accepted
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
 }

@@ -78,6 +78,11 @@ const CABLE_SERVICE_IDS = {
     'SHOWMAX': 'showmax'
 };
 
+const EDUCATION_SERVICE_IDS = {
+    'WAEC': 'waec',
+    'JAMB': 'jamb'
+};
+
 const ELECTRICITY_SERVICE_IDS = {
     // ClubKonnect & Nellobyte Numeric IDs mapped to VTPass Service IDs
     '01': 'eko-electric',
@@ -503,6 +508,144 @@ const fetchElectricityDiscos = async () => {
 
 /**
  * ==========================================
+ * EDUCATION (WAEC & JAMB)
+ * ==========================================
+ */
+
+const fetchEducationPackages = async (providerName) => {
+    try {
+        const serviceID = EDUCATION_SERVICE_IDS[providerName.toUpperCase()];
+        if (!serviceID) throw new Error("Invalid education provider for VTPass");
+
+        const response = await axios.get(`${getBaseUrl()}/service-variations`, {
+            params: { serviceID: serviceID },
+            headers: getGetHeaders()
+        });
+
+        if (response.data.content && response.data.content.varations) {
+            let variations = response.data.content.varations;
+
+            // Remove Direct Entry (DE) if the provider is JAMB per user request
+            if (providerName.toUpperCase() === 'JAMB') {
+                variations = variations.filter(v => v.variation_code !== 'de');
+            }
+
+            // Map to the expected ClubKonnect/Nellobyte standard layout
+            // so the frontend doesn't break
+            const mappedProducts = variations.map((item, index) => ({
+                PRODUCT_SNO: String(index + 1),
+                PRODUCT_CODE: item.variation_code,
+                PRODUCT_ID: item.variation_code,
+                PRODUCT_NAME: item.name,
+                PRODUCT_AMOUNT: item.variation_amount,
+                // Add a small markup to the selling price (e.g. + 150 NGN) just like other APIs
+                SELLING_PRICE: Number(item.variation_amount) + 150
+            }));
+
+            // Wrap in the structure the controller currently expects returning
+            return {
+                status: "OK",
+                EXAM_TYPE: mappedProducts
+            };
+        }
+
+        return { status: "OK", EXAM_TYPE: [] };
+    } catch (error) {
+        console.error("VTPass Fetch Education Packages Error:", error.response?.data || error.message);
+        throw error;
+    }
+};
+
+const verifyJambProfile = async (profileId, type = "utme") => {
+    try {
+        const response = await axios.post(`${getBaseUrl()}/merchant-verify`, {
+            billersCode: profileId,
+            serviceID: "jamb",
+            type: type // 'utme' or 'de'
+        }, {
+            headers: getPostHeaders()
+        });
+
+        console.log("VTPass Verify JAMB Response:", response.data);
+
+        const data = response.data;
+        if (data.code === "000" && data.content && data.content.Customer_Name) {
+            // Must return an object with customer_name to match existing schema
+            return {
+                customer_name: data.content.Customer_Name
+            };
+        }
+
+        throw new Error("Invalid JAMB Profile ID.");
+    } catch (error) {
+        throw new Error(error.response?.data?.response_description || error.message || "JAMB verification failed");
+    }
+};
+
+const buyEducationPin = async (provider, variationCode, phoneNo, profileId, amount, requestId) => {
+    try {
+        const serviceID = EDUCATION_SERVICE_IDS[provider.toUpperCase()];
+        if (!serviceID) throw new Error("Invalid education provider for VTPass");
+
+        const isJamb = provider.toUpperCase() === 'JAMB';
+
+        const payload = {
+            request_id: requestId,
+            serviceID: serviceID,
+            variation_code: variationCode,
+            phone: phoneNo,
+            amount: amount
+        };
+
+        // For JAMB, billersCode is the Profile ID
+        // For WAEC, billersCode is omitted or ignored (depends on VTPass docs, mostly omitted)
+        if (isJamb) {
+            payload.billersCode = profileId;
+        } else {
+            // For WAEC, we just send phone, vtpass uses 'billersCode' on other endpoints 
+            // but on WAEC it is not required.
+            // (We attach phone to billersCode as a fallback if desired, but leave it out per docs)
+        }
+
+        const response = await axios.post(`${getBaseUrl()}/pay`, {
+            ...payload
+        }, {
+            headers: getPostHeaders()
+        });
+
+        const data = response.data;
+        console.log(`VTPass ${provider} Response:`, data);
+
+        // Map it through standard response handler
+        const result = handlePurchaseResponse(data, requestId, `${provider} PIN purchase failed on VTPass`);
+
+        // VTPass returns WAEC PINs differently. 
+        // It's usually inside data.cards[0].Pin and data.cards[0].Serial 
+        // OR in data.purchased_code
+
+        let cardDetails = null;
+        if (data.cards && data.cards.length > 0) {
+            cardDetails = `Serial: ${data.cards[0].Serial} | PIN: ${data.cards[0].Pin}`;
+        } else if (data.Pin) {
+            cardDetails = data.Pin;
+        } else if (data.purchased_code) {
+            cardDetails = data.purchased_code; // Usually JAMB ePIN comes in here
+        }
+
+        return {
+            ...result,
+            cardDetails: cardDetails
+        };
+
+    } catch (error) {
+        console.error(`VTPass ${provider} Error:`, error.response?.data || error.message);
+        throw error;
+    }
+};
+
+
+/**
+ * ==========================================
  * COMMON: QUERY STATUS
  * ==========================================
  */
@@ -549,5 +692,8 @@ module.exports = {
     payElectricityBill,
     fetchElectricityDiscos,
     queryTransaction,
-    calculateMyPrice
+    calculateMyPrice,
+    fetchEducationPackages,
+    verifyJambProfile,
+    buyEducationPin
 };

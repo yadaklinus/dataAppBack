@@ -75,20 +75,34 @@ const processTransactionUpdate = async (data) => {
 
         let tokenToSave = purchased_code || txContent.token || txContent.metertoken || null;
 
+        // VTPass sometimes returns Education PINs inside a cards array.
+        let cardDetailsToSave = null;
+        if (data.cards && data.cards.length > 0) {
+            cardDetailsToSave = `Serial: ${data.cards[0].Serial} | PIN: ${data.cards[0].Pin}`;
+        } else if (data.Pin) {
+            cardDetailsToSave = data.Pin;
+        } else if (purchased_code && existingTx.type === 'EDUCATION') {
+            cardDetailsToSave = purchased_code; // Usually JAMB ePIN comes in here
+        }
+
         // Update DB
+        const updatedMetadata = {
+            ...(typeof existingTx.metadata === 'object' ? existingTx.metadata : {}),
+            webhookPayload: {
+                deliveredAt: new Date().toISOString() // Track when it arrived
+            }
+        };
+
+        if (tokenToSave) updatedMetadata.token = tokenToSave;
+        if (cardDetailsToSave) updatedMetadata.cardDetails = cardDetailsToSave;
+
         await prisma.transaction.update({
             where: { id: existingTx.id },
             data: {
                 status: TransactionStatus.SUCCESS,
                 providerReference: transactionId,
                 providerStatus: response_description,
-                metadata: {
-                    ...(typeof existingTx.metadata === 'object' ? existingTx.metadata : {}),
-                    token: tokenToSave,
-                    webhookPayload: {
-                        deliveredAt: new Date().toISOString() // Track when it arrived
-                    }
-                }
+                metadata: updatedMetadata
             }
         });
 
@@ -100,7 +114,8 @@ const processTransactionUpdate = async (data) => {
                 amount: existingTx.amount,
                 reference: requestId,
                 token: tokenToSave,
-                metadata: existingTx.metadata
+                cardDetails: cardDetailsToSave,
+                metadata: updatedMetadata
             });
         } catch (socketErr) {
             console.error("[Socket Error]", socketErr.message);
