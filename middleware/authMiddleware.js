@@ -36,27 +36,47 @@ const authMiddleware = async (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET);
 
         // 3. Optional: Verify User still exists in DB
-        // This acts as a "Server Session" check to ensure the account wasn't deleted
-        const user = await prisma.user.findUnique({
-            where: { id: decoded.userId },
-            select: {
-                id: true,
-                email: true,
-                tier: true,
-                isKycVerified: true
-            }
-        });
-
-        if (!user) {
-            return res.status(401).json({
-                status: "ERROR",
-                message: "Session invalid. User no longer exists."
+        // Check if token belongs to Staff or User
+        if (decoded.isStaff) {
+            const staff = await prisma.staff.findUnique({
+                where: { id: decoded.userId },
+                select: {
+                    id: true,
+                    email: true,
+                    role: true,
+                    isActive: true,
+                    requiresPasswordChange: true
+                }
             });
-        }
 
-        // 4. Attach user info to the request object
-        // Now any route using this middleware can access req.user
-        req.user = user;
+            if (!staff || !staff.isActive) {
+                return res.status(401).json({
+                    status: "ERROR",
+                    message: "Session invalid. Staff account is inactive or deleted."
+                });
+            }
+
+            req.user = { ...staff, isStaff: true };
+        } else {
+            const user = await prisma.user.findUnique({
+                where: { id: decoded.userId },
+                select: {
+                    id: true,
+                    email: true,
+                    tier: true,
+                    isKycVerified: true
+                }
+            });
+
+            if (!user) {
+                return res.status(401).json({
+                    status: "ERROR",
+                    message: "Session invalid. User no longer exists."
+                });
+            }
+
+            req.user = { ...user, isStaff: false };
+        }
 
         next(); // Move to the actual route handler
     } catch (error) {
@@ -75,17 +95,117 @@ const authMiddleware = async (req, res, next) => {
 };
 
 /**
- * Middleware to restrict access to ADMIN only
+ * Standalone Middleware for ADMIN tier users
  */
-const authorizeAdmin = (req, res, next) => {
-    if (req.user && req.user.tier === 'ADMIN') {
-        next();
-    } else {
-        return res.status(403).json({
+const authorizeAdmin = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ status: "ERROR", message: "Access denied." });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        if (decoded.isStaff) {
+            return res.status(403).json({ status: "ERROR", message: "User privileges required." });
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { id: decoded.userId },
+            select: { id: true, tier: true }
+        });
+
+        if (user && user.tier === 'ADMIN') {
+            req.user = { ...user, isStaff: false };
+            next();
+        } else {
+            return res.status(403).json({ status: "ERROR", message: "Administrative privileges required." });
+        }
+    } catch (error) {
+        return res.status(403).json({ status: "ERROR", message: "Invalid or expired token." });
+    }
+};
+
+/**
+ * Standalone Middleware for Staff (TICKETING_OFFICER or SUPER_ADMIN)
+ * Handles both authentication and role verification
+ */
+const requireTicketStaff = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        console.log("Auth Header:", authHeader);
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            console.error("401 Check: Missing or malformed Auth Header. Header received:", authHeader);
+            return res.status(401).json({ status: "ERROR", message: "Access denied. No token provided." });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const effectiveSecret = JWT_SECRET || process.env.JWT_SECRET;
+        console.log("401 Check: Using Secret (prefix):", effectiveSecret ? effectiveSecret.substring(0, 10) : "MISSING");
+
+        const decoded = jwt.verify(token, effectiveSecret);
+        console.log("401 Check: Decoded Payload:", decoded);
+
+        if (!decoded.isStaff) {
+            return res.status(403).json({ status: "ERROR", message: "Access restricted. Staff authentication required." });
+        }
+
+        const staff = await prisma.staff.findUnique({
+            where: { id: decoded.userId },
+            select: { id: true, email: true, role: true, isActive: true }
+        });
+
+        if (!staff || !staff.isActive) {
+            console.error("401 Check: Staff not found or inactive. UserID from token:", decoded.userId, "Staff object:", staff);
+            return res.status(401).json({ status: "ERROR", message: "Staff account is inactive or deleted." });
+        }
+
+        if (staff.role === 'TICKETING_OFFICER' || staff.role === 'SUPER_ADMIN') {
+            req.user = { ...staff, isStaff: true };
+            next();
+        } else {
+            return res.status(403).json({ status: "ERROR", message: "Access restricted. Ticketing Staff privileges required." });
+        }
+    } catch (error) {
+        return res.status(error.name === 'TokenExpiredError' ? 401 : 403).json({
             status: "ERROR",
-            message: "Access restricted. Administrative privileges required."
+            message: error.name === 'TokenExpiredError' ? "Session expired." : "Invalid or tampered token."
         });
     }
 };
 
-module.exports = { authMiddleware, authorizeAdmin };
+/**
+ * Standalone Middleware for Staff (SUPER_ADMIN only)
+ */
+const requireSuperAdmin = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ status: "ERROR", message: "Access denied." });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        if (!decoded.isStaff) {
+            return res.status(403).json({ status: "ERROR", message: "Staff privileges required." });
+        }
+
+        const staff = await prisma.staff.findUnique({
+            where: { id: decoded.userId },
+            select: { id: true, role: true, isActive: true }
+        });
+
+        if (staff && staff.isActive && staff.role === 'SUPER_ADMIN') {
+            req.user = { ...staff, isStaff: true };
+            next();
+        } else {
+            return res.status(403).json({ status: "ERROR", message: "Super Admin privileges required." });
+        }
+    } catch (error) {
+        return res.status(403).json({ status: "ERROR", message: "Invalid or expired token." });
+    }
+};
+
+module.exports = { authMiddleware, authorizeAdmin, requireTicketStaff, requireSuperAdmin };

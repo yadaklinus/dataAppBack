@@ -1,0 +1,92 @@
+MUFTI PAY - STAFF AUTHENTICATION ROUTES
+======================================
+
+These routes handle the lifecycle of staff accounts, including login, mandatory password resets for new accounts, and account creation.
+
+1. STAFF LOGIN (Standard)
+-------------------------
+Route: POST /api/v1/auth/staff/login
+Access: Public
+Description: Authenticates a staff member. Returns a JWT if successful.
+
+Request Body:
+{
+  "email": "staff@muftipay.com",
+  "password": "yourpassword"
+}
+
+Response (Success - 200 OK):
+{
+  "status": "OK",
+  "message": "Login successful",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiI...",
+    "user": {
+      "id": "uuid-string",
+      "email": "staff@muftipay.com",
+      "fullName": "Staff Name",
+      "role": "TICKETING_OFFICER"
+    }
+  }
+}
+
+Response (Force Reset Required - 403 Forbidden):
+{
+  "status": "FORCE_RESET_REQUIRED",
+  "message": "This is your first login. You must change your default password.",
+  "data": {
+    "email": "staff@muftipay.com"
+  }
+}
+
+
+2. FORCE PASSWORD RESET (First Login)
+-------------------------------------
+Route: POST /api/v1/auth/staff/force-reset
+Access: Public (Required for first-time login)
+Description: Changes the default password to a new one and generates a login session.
+
+Request Body:
+{
+  "email": "staff@muftipay.com",
+  "oldPassword": "Muftipaystaff@12345",
+  "newPassword": "NewSecurePassword2026!"
+}
+
+Response (Success - 200 OK):
+{
+  "status": "OK",
+  "message": "Password changed successfully. You are now logged in.",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiI...",
+    "user": { ... staff details ... }
+  }
+}
+
+
+3. CREATE STAFF (Super Admin Only)
+----------------------------------
+Route: POST /api/v1/auth/staff/create
+Access: Super Admin (Authorization: Bearer <super-admin-token>)
+Description: Creates a new staff account with a default password.
+
+Request Body:
+{
+  "email": "new.staff@muftipay.com",
+  "fullName": "New Team Member",
+  "role": "TICKETING_OFFICER" // or "SUPER_ADMIN"
+}
+
+Response (Success - 201 Created):
+{
+  "status": "OK",
+  "message": "Staff member created successfully",
+  "data": {
+    "id": "uuid-string",
+    "email": "new.staff@muftipay.com",
+    "fullName": "New Team Member",
+    "role": "TICKETING_OFFICER"
+  }
+}
+
+Default password for all new accounts is: Muftipaystaff@12345

@@ -3,13 +3,15 @@ const vtpassProvider = require('@/services/vtpassProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
-const { generateRef } = require('@/lib/crypto')
+const { generateRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
+const bcrypt = require('bcryptjs');
 
 const purchaseDataSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
     planId: z.string().min(1).max(20),
-    phoneNumber: z.string()
+    phoneNumber: z.string(),
+    transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 });
 /**
  * Fetch available plans (Selling Price only)
@@ -36,7 +38,7 @@ const purchaseData = async (req, res) => {
     }
 
 
-    const { network, planId, phoneNumber } = parsed.data;
+    const { network, planId, phoneNumber, transactionPin } = parsed.data;
 
     console.log("Data Purchase Request:", network, planId, phoneNumber);
     const userId = req.user.id;
@@ -70,6 +72,14 @@ const purchaseData = async (req, res) => {
         planName = selectedPlan.name;
 
         const result = await prisma.$transaction(async (tx) => {
+            // Verify Transaction PIN
+            const user = await tx.user.findUnique({ where: { id: userId } });
+            if (!user) throw new Error("User not found");
+            if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
+
+            const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
+            if (!isPinValid) throw new Error("Invalid transaction PIN");
+
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
             if (!wallet || Number(wallet.balance) < sellingPrice) {

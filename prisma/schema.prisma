@@ -34,18 +34,39 @@ model User {
   // Security Fields
   failedLoginAttempts Int       @default(0)
   lockoutUntil        DateTime?
+  transactionPin      String? // We make it optional initially to not break existing users without it
 
   // Relationships
   wallet         Wallet? // Moved balance here
   kycData        KycData?
   transactions   Transaction[]
   flightRequests FlightBookingRequest[]
+  activitiesDone FlightRequestActivity[]
   refreshTokens  RefreshToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([email, phoneNumber])
+}
+
+enum StaffRole {
+  TICKETING_OFFICER
+  SUPER_ADMIN
+}
+
+model Staff {
+  id                     String    @id @default(uuid())
+  email                  String    @unique
+  passwordHash           String
+  fullName               String
+  role                   StaffRole @default(TICKETING_OFFICER)
+  isActive               Boolean   @default(true)
+  requiresPasswordChange Boolean   @default(true)
+
+  activitiesDone FlightRequestActivity[]
+
+  createdAt DateTime @default(now())
 }
 
 model RefreshToken {
@@ -70,6 +91,8 @@ model Wallet {
   balance      Decimal @default(0.00) @db.Decimal(15, 2)
   bonusBalance Decimal @default(0.00) @db.Decimal(15, 2) // For commissions
   totalSpent   Decimal @default(0.00) @db.Decimal(15, 2)
+
+  flightTransactions FlightTransaction[]
 
   updatedAt DateTime @updatedAt
 }
@@ -138,8 +161,7 @@ model Transaction {
 
   printedPins RechargePin[]
 
-  createdAt            DateTime              @default(now())
-  flightBookingRequest FlightBookingRequest?
+  createdAt DateTime @default(now())
 
   @@index([userId, status, type, createdAt])
 }
@@ -188,11 +210,20 @@ model PasswordResetOTP {
 // --- FLIGHT BOOKING SYSTEM ---
 
 enum FlightRequestStatus {
-  PENDING
-  AWAITING_PAYMENT
-  PAID_PENDING_TICKET
-  COMPLETED
+  FUTURE_HELD
+  OPTIONS_PROVIDED
+  SELECTION_MADE
+  QUOTED
+  EXPIRED
+  PAID_PROCESSING
+  TICKETED
   CANCELLED
+  REFUNDED
+}
+
+enum TripType {
+  ONE_WAY
+  ROUND_TRIP
 }
 
 model FlightBookingRequest {
@@ -200,37 +231,94 @@ model FlightBookingRequest {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  origin        String
-  destination   String
-  departureDate DateTime
-  returnDate    DateTime?
+  // Phase 1: Request Data
+  origin      String
+  destination String
+  targetDate  DateTime
+  returnDate  DateTime?
+  tripType    TripType  @default(ONE_WAY)
+  flightClass String    @default("ECONOMY")
+  adults      Int       @default(1)
+  children    Int       @default(0)
+  infants     Int       @default(0)
 
-  // Passenger Breakdown
-  adults   Int @default(1)
-  children Int @default(0)
-  infants  Int @default(0)
+  // Phase 2: Options & Selection
+  flightOptions    Json?
+  selectedOptionId String?
 
-  // Detailed Passenger Info (Full Names, Gender, DOB, Passport No, etc.)
-  passengerDetails Json?
+  // Phase 3 & 4: Fulfillment Data (Filled by Admin)
+  airlineName        String?
+  pnr                String?
+  ticketingTimeLimit DateTime?
 
-  flightClass String @default("ECONOMY") // ECONOMY, BUSINESS, FIRST
+  // Financials
+  netCost      Decimal? @db.Decimal(15, 2)
+  sellingPrice Decimal? @db.Decimal(15, 2)
 
-  // User's anticipated budget 
-  expectedPrice Decimal? @db.Decimal(15, 2)
+  // Delivery
+  eTicketUrl String?
 
-  // Admin fields
-  quotedPrice   Decimal? @db.Decimal(15, 2)
-  adminNotes    String?
-  ticketDetails String? // Could be PNR, JSON string, or link to PDF
+  status FlightRequestStatus @default(FUTURE_HELD)
 
-  status FlightRequestStatus @default(PENDING)
+  // Relations
+  passengers   Passenger[]
+  activityLogs FlightRequestActivity[]
 
-  // Link to payment if accepted
-  transactionId String?      @unique
-  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  flightTransaction FlightTransaction? @relation("BookingToTransaction")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId, status])
+  @@index([targetDate])
+}
+
+model Passenger {
+  id              String               @id @default(uuid())
+  flightRequestId String
+  flightRequest   FlightBookingRequest @relation(fields: [flightRequestId], references: [id], onDelete: Cascade)
+
+  title       String
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime
+  gender      String
+
+  createdAt DateTime @default(now())
+}
+
+model FlightRequestActivity {
+  id        String               @id @default(uuid())
+  requestId String
+  request   FlightBookingRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id])
+  staffId String?
+  staff   Staff?  @relation(fields: [staffId], references: [id])
+
+  previousState String
+  newState      String
+  actionDetails String? @db.Text
+
+  createdAt DateTime @default(now())
+}
+
+enum FlightTransactionType {
+  PAYMENT
+  REFUND
+}
+
+model FlightTransaction {
+  id        String                @id @default(uuid())
+  walletId  String
+  wallet    Wallet                @relation(fields: [walletId], references: [id])
+  type      FlightTransactionType @default(PAYMENT)
+  amount    Decimal               @db.Decimal(15, 2)
+  reference String                @unique
+
+  flightRequestId String               @unique
+  flightRequest   FlightBookingRequest @relation("BookingToTransaction", fields: [flightRequestId], references: [id])
+
+  createdAt DateTime @default(now())
 }

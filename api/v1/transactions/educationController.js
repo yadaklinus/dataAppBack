@@ -4,6 +4,7 @@ const eduProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
+const bcrypt = require('bcryptjs');
 
 // --- SCHEMAS ---
 
@@ -24,7 +25,8 @@ const purchasePinSchema = z.object({
     }),
     examType: z.string().min(1, "Exam type is required"), // This maps to PRODUCT_CODE
     phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
-    profileId: z.string().optional()
+    profileId: z.string().optional(),
+    transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 }).refine((data) => {
     if (data.provider === 'JAMB' && !data.profileId) return false;
     return true;
@@ -89,8 +91,8 @@ const purchasePin = async (req, res) => {
         });
     }
 
-    const { provider, examType, phoneNo, profileId } = validation.data;
-    console.log(provider, examType, phoneNo, profileId)
+    const { provider, examType, phoneNo, profileId, transactionPin } = validation.data;
+    console.log(provider, examType, phoneNo, profileId);
     const userId = req.user.id;
 
     try {
@@ -134,6 +136,14 @@ const purchasePin = async (req, res) => {
 
         // 3. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
+            // Verify Transaction PIN
+            const user = await tx.user.findUnique({ where: { id: userId } });
+            if (!user) throw new Error("User not found");
+            if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
+
+            const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
+            if (!isPinValid) throw new Error("Invalid transaction PIN");
+
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
             if (!wallet || Number(wallet.balance) < pinCost) {

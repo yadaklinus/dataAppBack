@@ -23,11 +23,13 @@ import paymentRouterV1 from '@/routes/paymentRoutes';
 import adminRouterV1 from '@/routes/adminRoutes';
 import paystackRouterV1 from '@/routes/paystackRoutes';
 import vtpassWebhookRouterV1 from '@/routes/vtpassWebhookRoutes';
+import flightRouterV1 from '@/routes/flightRoutes';
 import { createServer } from 'http';
 // import { initSocket } from '@/lib/socket';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
 import { startNelloByteStatusJob } from './jobs/nelloByteStatusJob';
+import { startFlightStatusJob } from './jobs/flightCronJob';
 
 dotenv.config();
 
@@ -103,6 +105,7 @@ app.use("/api/v1/payment", paymentRouterV1);
 app.use("/api/v1/admin", adminRouterV1);
 app.use("/api/v1/paystack", paystackRouterV1);
 app.use("/api/v1/vtpass", vtpassWebhookRouterV1);
+app.use("/api/v1/flights", flightRouterV1);
 
 // 9. Global Error Handling Middleware (Builder Tip: Never let the server crash)
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -126,6 +129,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 // startNelloByteStatusJob();
 //startMonnifyTransactionSync();
 //startPaystackTransactionSync();
+startFlightStatusJob();
 
 // const httpServer = createServer(app);
 

@@ -12,7 +12,8 @@ const registerSchema = z.object({
         .regex(/[a-z]/, "Password must contain at least one lowercase letter")
         .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
         .regex(/[0-9]/, "Password must contain at least one number")
-        .regex(/[^a-zA-Z0-9]/, "Password must contain at least one special character")
+        .regex(/[^a-zA-Z0-9]/, "Password must contain at least one special character"),
+    transactionPin: z.string().regex(/^\d{4}$/, "Transaction PIN must be exactly 4 digits")
 });
 
 const formatZodError = (error) => {
@@ -30,7 +31,7 @@ const register = async (req, res) => {
             });
         }
 
-        const { userName, email, phoneNumber, password } = validation.data;
+        const { userName, email, phoneNumber, password, transactionPin } = validation.data;
 
         // 2. Uniqueness Check (Email and Phone)
         const existingUser = await prisma.user.findFirst({
@@ -46,8 +47,9 @@ const register = async (req, res) => {
             });
         }
 
-        // 3. Secure Password Hashing
+        // 3. Secure Password and PIN Hashing
         const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+        const hashedPin = await bcrypt.hash(transactionPin, SALT_ROUNDS);
 
         // 4. Atomic Database Creation
         const newUser = await prisma.user.create({
@@ -56,6 +58,7 @@ const register = async (req, res) => {
                 email,
                 phoneNumber,
                 passwordHash: hashedPassword,
+                transactionPin: hashedPin,
                 wallet: {
                     create: {
                         balance: 0.00,

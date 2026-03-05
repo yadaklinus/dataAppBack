@@ -3,8 +3,9 @@ const prisma = require('@/lib/prisma');
 const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
-const { generateRef } = require('@/lib/crypto')
+const { generateRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
+const bcrypt = require('bcryptjs');
 // --- SCHEMAS ---
 
 const verifyIUCSchema = z.object({
@@ -19,7 +20,8 @@ const purchaseSubscriptionSchema = z.object({
     packageCode: z.string().min(1, "Package code is required"),
     smartCardNo: z.string().min(8),
     phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
-    amount: z.number().optional() // VTPass renewal may require an explicit amount
+    amount: z.number().optional(), // VTPass renewal may require an explicit amount
+    transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 });
 
 /**
@@ -84,7 +86,7 @@ const purchaseSubscription = async (req, res) => {
             });
         }
 
-        const { cableTV, packageCode, smartCardNo, phoneNo, amount } = validation.data;
+        const { cableTV, packageCode, smartCardNo, phoneNo, amount, transactionPin } = validation.data;
         console.log("Cable TV Purchase Request:", cableTV, packageCode, smartCardNo, phoneNo, amount);
         const userId = req.user.id;
 
@@ -104,6 +106,14 @@ const purchaseSubscription = async (req, res) => {
 
         // 3. Atomic Wallet Deduction
         const result = await prisma.$transaction(async (tx) => {
+            // Verify Transaction PIN
+            const user = await tx.user.findUnique({ where: { id: userId } });
+            if (!user) throw new Error("User not found");
+            if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
+
+            const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
+            if (!isPinValid) throw new Error("Invalid transaction PIN");
+
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
             if (!wallet || Number(wallet.balance) < amountToDeduct) {

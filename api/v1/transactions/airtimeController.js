@@ -5,6 +5,7 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
 const { generateRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
+const bcrypt = require('bcryptjs');
 
 /**
  * Handles Airtime Purchase Logic
@@ -14,7 +15,8 @@ const { isNetworkError } = require('@/lib/financialSafety');
 const purchaseAirtimeSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
     amount: z.number(),
-    phoneNumber: z.string()
+    phoneNumber: z.string(),
+    transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 });
 
 const purchaseAirtime = async (req, res) => {
@@ -25,7 +27,7 @@ const purchaseAirtime = async (req, res) => {
         return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
     }
 
-    const { network, amount, phoneNumber } = parsed.data;
+    const { network, amount, phoneNumber, transactionPin } = parsed.data;
 
     console.log("Airtime Purchase Request:", network, amount, phoneNumber);
     const userId = req.user.id;
@@ -55,6 +57,14 @@ const purchaseAirtime = async (req, res) => {
 
         // 1. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
+            // Verify Transaction PIN
+            const user = await tx.user.findUnique({ where: { id: userId } });
+            if (!user) throw new Error("User not found");
+            if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
+
+            const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
+            if (!isPinValid) throw new Error("Invalid transaction PIN");
+
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
             if (!wallet || Number(wallet.balance) < sellingPrice) {

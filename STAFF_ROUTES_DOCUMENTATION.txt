@@ -1,0 +1,61 @@
+MUFTI PAY - STAFF MANAGEMENT ROUTES (FUNCTIONAL)
+==============================================
+
+These routes are dedicated to the flight booking management system for staff members (Ticketing Officers and Super Admins). 
+Note: All routes require a valid Staff JWT in the Authorization header.
+
+1. LIST ALL FLIGHT REQUESTS
+---------------------------
+Route: GET /api/v1/flights/staff/requests
+Access: Staff (TICKETING_OFFICER, SUPER_ADMIN)
+Description: Retrieves a list of all flight booking requests submitted by users, ordered by most recent.
+Response: 
+{
+  "status": "OK",
+  "data": [
+    { "id": "...", "origin": "LOS", "destination": "ABV", "tripType": "ROUND_TRIP", ... }
+  ]
+}
+
+2. PROVIDE FLIGHT OPTIONS
+-------------------------
+Route: POST /api/v1/flights/staff/:id/options
+Access: Staff
+Description: Sends available flight options (airline, time, price) to the user for them to choose from.
+Payload:
+{
+  "flightOptions": [
+    { "id": "opt1", "airline": "Air Peace", "time": "10:00 AM", "estPrice": 150000 }
+  ]
+}
+
+3. QUOTE SPECIFIC FLIGHT
+------------------------
+Route: POST /api/v1/flights/staff/:id/quote
+Access: Staff
+Description: Sends the final price and PNR (Booking Reference) to the user once they have made a selection.
+Payload:
+{
+  "airlineName": "Air Peace",
+  "pnr": "ABC123XYZ",
+  "ticketingTimeLimit": "2026-03-04T12:00:00.000Z",
+  "netCost": 140000,
+  "sellingPrice": 155000
+}
+
+4. FULFILL TICKET
+-----------------
+Route: POST /api/v1/flights/staff/:id/fulfill
+Access: Staff
+Description: Finalizes the booking after the user has paid. Uploads the E-Ticket URL or details.
+Payload:
+{
+  "eTicketUrl": "https://storage.muftipay.com/tickets/XYZ.pdf",
+  "ticketDetails": "Ticket issued successfully."
+}
+
+5. GENERAL ADMIN STATS
+----------------------
+Route: GET /api/v1/admin/stats
+Access: Admin Tier (User) / Staff (Super Admin)
+Description: Retrieves general system statistics including transaction volumes and user counts.
