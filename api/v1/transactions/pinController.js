@@ -3,7 +3,7 @@ const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto')
-const { isNetworkError } = require('@/lib/financialSafety');
+const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 
 /**
  * Handles the purchase and generation of Recharge Card PINs
@@ -118,6 +118,9 @@ const printPins = async (req, res) => {
             });
 
             return { transaction, requestId };
+        }, {
+            maxWait: 15000,
+            timeout: 30000
         });
 
         try {
@@ -156,19 +159,8 @@ const printPins = async (req, res) => {
                 });
             }
 
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: {
-                        balance: { increment: totalCost },
-                        totalSpent: { decrement: totalCost }
-                    }
-                })
-            ]);
+            // SMART AUTO-REFUND with retry logic
+            await safeRefund(prisma, userId, totalCost, result.transaction.id);
 
             return res.status(502).json({ status: "ERROR", message: "Provider failed. Wallet refunded." });
         }
@@ -231,7 +223,10 @@ const getPrintingOrders = async (req, res) => {
             prisma.transaction.count({
                 where: { userId, type: 'RECHARGE_PIN' }
             })
-        ]);
+        ], {
+            maxWait: 10000,
+            timeout: 15000
+        });
 
         return res.status(200).json({
             status: "OK",

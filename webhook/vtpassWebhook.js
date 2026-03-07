@@ -137,6 +137,9 @@ const processTransactionUpdate = async (data) => {
                     totalSpent: { decrement: amountToRefund }
                 }
             });
+        }, {
+            maxWait: 10000,
+            timeout: 15000
         });
 
         console.log(`[VTPass Webhook] REVERSED: Ref ${requestId}. Refunded ₦${amountToRefund} to user ${userId}.`);

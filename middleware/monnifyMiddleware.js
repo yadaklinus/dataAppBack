@@ -87,6 +87,9 @@ const handleMonnifyWebhook = async (req, res) => {
                     }
                 });
                 console.log(`[Monnify Webhook] Flight Payment SUCCESS: Request ${flightTx.flightRequestId}`);
+            }, {
+                maxWait: 10000,
+                timeout: 15000
             });
 
             return; // Flight payments do not credit wallet, exit early.
@@ -191,6 +194,9 @@ const handleMonnifyWebhook = async (req, res) => {
 
             // Console log outside the conditional blocks to confirm success
             console.log(`[Monnify Webhook] Credited User ${userId} with ₦${walletCreditAmount}`);
+        }, {
+            maxWait: 10000,
+            timeout: 15000
         });
 
     } catch (error) {

@@ -7,6 +7,7 @@ const pinProvider = require('@/services/pinProvider');
 
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { getWalletCreditAmount } = require('@/lib/paymentUtils');
+const { safeRefund } = require('@/lib/financialSafety');
 
 /**
  * Provider Mapping for Service Transactions
@@ -99,6 +100,9 @@ const reconcileFunding = async (txn) => {
                     fee: Math.max(0, totalPaid - walletCreditAmount)
                 }
             });
+        }, {
+            maxWait: 10000,
+            timeout: 15000
         });
         console.log(`[Success] ✅ Recovered Funding Ref: ${txn.reference}`);
     } else if (verification?.status === "failed") {
@@ -128,19 +132,7 @@ const reconcileVTPassService = async (txn) => {
     else if (result.status === "FAILED") {
         console.log(`[Failure] ❌ Provider failed ${txn.type} Ref: ${txn.reference}. Triggering REFUND.`);
 
-        await prisma.$transaction([
-            prisma.transaction.update({
-                where: { id: txn.id },
-                data: { status: TransactionStatus.FAILED }
-            }),
-            prisma.wallet.update({
-                where: { userId: txn.userId },
-                data: {
-                    balance: { increment: txn.amount },
-                    totalSpent: { decrement: txn.amount }
-                }
-            })
-        ]);
+        await safeRefund(prisma, txn.userId, txn.amount, txn.id);
     }
 };
 
@@ -166,19 +158,7 @@ const reconcileLegacyService = async (txn) => {
     else if (["ORDER_CANCELLED", "ORDER_FAILED"].includes(result.status)) {
         console.log(`[Failure] ❌ Provider failed ${txn.type} Ref: ${txn.reference}. Triggering REFUND.`);
 
-        await prisma.$transaction([
-            prisma.transaction.update({
-                where: { id: txn.id },
-                data: { status: TransactionStatus.FAILED }
-            }),
-            prisma.wallet.update({
-                where: { userId: txn.userId },
-                data: {
-                    balance: { increment: txn.amount },
-                    totalSpent: { decrement: txn.amount }
-                }
-            })
-        ]);
+        await safeRefund(prisma, txn.userId, txn.amount, txn.id);
     }
 };
 

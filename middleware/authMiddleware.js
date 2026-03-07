@@ -87,9 +87,18 @@ const authMiddleware = async (req, res, next) => {
             });
         }
 
-        return res.status(403).json({
+        if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
+            return res.status(403).json({
+                status: "ERROR",
+                message: "Invalid or inactive session token."
+            });
+        }
+
+        // --- RESILIENCE FIX: Don't logout on DB/System errors ---
+        console.error("[Auth Middleware Error]:", error.message);
+        return res.status(503).json({
             status: "ERROR",
-            message: "Invalid or tampered token."
+            message: "System busy or database unreachable. Please try again in a moment."
         });
     }
 };

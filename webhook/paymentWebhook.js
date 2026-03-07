@@ -109,6 +109,9 @@ const handleFlutterwaveWebhook = async (req, res) => {
                     }
                 });
                 console.log(`[Webhook] Flight Payment SUCCESS: Request ${flightTx.flightRequestId}`);
+            }, {
+                maxWait: 10000,
+                timeout: 15000
             });
 
             return; // Exit early, no wallet funding for flights
@@ -226,6 +229,9 @@ const handleFlutterwaveWebhook = async (req, res) => {
 
                 console.log(`[Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
             }
+        }, {
+            maxWait: 10000,
+            timeout: 15000
         });
 
     } catch (error) {

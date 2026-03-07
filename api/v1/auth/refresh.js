@@ -65,7 +65,13 @@ const refresh = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Refresh Error:", error);
+        console.error("Refresh Error:", error.message);
+
+        // Handle database timeouts or pool exhaustion gracefully
+        if (error.message.includes('Prisma') || error.message.includes('Pool') || error.message.includes('timeout')) {
+            return res.status(503).json({ status: "ERROR", message: "System busy. Please retry in a moment." });
+        }
+
         return res.status(500).json({ status: "ERROR", message: "Internal server error" });
     }
 };

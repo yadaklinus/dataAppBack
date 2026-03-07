@@ -3,7 +3,7 @@ const prisma = require('@/lib/prisma');
 const eduProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
-const { isNetworkError } = require('@/lib/financialSafety');
+const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
 // --- SCHEMAS ---
@@ -184,6 +184,9 @@ const purchasePin = async (req, res) => {
             });
 
             return { transaction, requestId };
+        }, {
+            maxWait: 15000,
+            timeout: 30000
         });
 
         // 3. Call External Provider (VTPass)
@@ -232,20 +235,8 @@ const purchasePin = async (req, res) => {
                 });
             }
 
-            // AUTO-REFUND
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: {
-                        balance: { increment: pinCost },
-                        totalSpent: { decrement: pinCost }
-                    }
-                })
-            ]);
+            // AUTO-REFUND with retry logic
+            await safeRefund(prisma, userId, pinCost, result.transaction.id);
 
             return res.status(502).json({
                 status: "ERROR",

@@ -3,7 +3,7 @@ const prisma = require('@/lib/prisma');
 const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
-const { isNetworkError } = require('@/lib/financialSafety');
+const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
 // --- SCHEMAS ---
@@ -182,7 +182,7 @@ const purchaseElectricity = async (req, res) => {
                         meterNo,
                         meterType,
                         customerName: verification.customer_name,
-                        address: verification.customer_address,
+                        address: verification.customer_address || verification.Address,
                         token: "",
                         recipient: user.phoneNumber,
                         unit: "",
@@ -192,6 +192,9 @@ const purchaseElectricity = async (req, res) => {
             });
 
             return { transaction, requestId };
+        }, {
+            maxWait: 15000,
+            timeout: 30000
         });
 
         // 3. Call External Provider
@@ -210,6 +213,8 @@ const purchaseElectricity = async (req, res) => {
 
             const finalStatus = providerResponse.isPending ? TransactionStatus.PENDING : TransactionStatus.SUCCESS;
 
+            console.log("Address", providerResponse.address === undefined ? "undefined" : "defined")
+
             await prisma.transaction.update({
                 where: { id: result.transaction.id },
                 data: {
@@ -218,7 +223,7 @@ const purchaseElectricity = async (req, res) => {
                     providerStatus: providerResponse.status || providerResponse.transactionstatus,
                     metadata: {
                         ...result.transaction.metadata,
-                        address: providerResponse.address,
+                        address: providerResponse.address === undefined ? result.transaction.metadata.address || providerResponse.customerAddress : providerResponse.address,
                         token: providerResponse.token || providerResponse.metertoken,
                         units: providerResponse.units || providerResponse.PurchasedUnits
                     }
@@ -252,20 +257,8 @@ const purchaseElectricity = async (req, res) => {
                 });
             }
 
-            // 5. AUTO-REFUND
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: {
-                        balance: { increment: billAmount },
-                        totalSpent: { decrement: billAmount }
-                    }
-                })
-            ]);
+            // 5. AUTO-REFUND with retry logic
+            await safeRefund(prisma, userId, billAmount, result.transaction.id);
 
             return res.status(502).json({
                 status: "ERROR",

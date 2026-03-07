@@ -16,11 +16,11 @@ const getProfile = async (req, res) => {
                 tier: true,
                 isKycVerified: true,
                 createdAt: true,
-                kycData:{
-                    select:{
-                        bankName:true,
-                        virtualAccountNumber:true,
-                        status:true,
+                kycData: {
+                    select: {
+                        bankName: true,
+                        virtualAccountNumber: true,
+                        status: true,
 
                     }
                 },
@@ -41,7 +41,7 @@ const getProfile = async (req, res) => {
             walletBalance: user.wallet?.balance || 0,
             bonusBalance: user.wallet?.bonusBalance || 0,
             totalSpent: user.wallet?.totalSpent || 0,
-            wallet: undefined 
+            wallet: undefined
         };
 
         return res.status(200).json({ status: "OK", data: responseData });
@@ -68,11 +68,14 @@ const getTransactions = async (req, res) => {
                 skip: parseInt(skip),
                 take: parseInt(limit),
                 include: {
-                    printedPins: true 
+                    printedPins: true
                 }
             }),
             prisma.transaction.count({ where })
-        ]);
+        ], {
+            maxWait: 10000,
+            timeout: 15000
+        });
 
         return res.status(200).json({
             status: "OK",
@@ -85,6 +88,7 @@ const getTransactions = async (req, res) => {
             }
         });
     } catch (error) {
+        console.error("Fetch Transactions Error:", error.message);
         return res.status(500).json({ status: "ERROR", message: "Failed to fetch transactions" });
     }
 };
@@ -102,8 +106,8 @@ const getDashboard = async (req, res) => {
             // 1. User Info including the decoupled Wallet
             prisma.user.findUnique({
                 where: { id: userId },
-                select: { 
-                    fullName: true, 
+                select: {
+                    fullName: true,
                     tier: true,
                     wallet: { select: { balance: true, totalSpent: true } }
                 }
@@ -125,7 +129,10 @@ const getDashboard = async (req, res) => {
                 },
                 _sum: { amount: true }
             })
-        ]);
+        ], {
+            maxWait: 10000,
+            timeout: 15000
+        });
 
         return res.status(200).json({
             status: "OK",
@@ -176,7 +183,10 @@ const getUserPins = async (req, res) => {
                 }
             }),
             prisma.rechargePin.count({ where })
-        ]);
+        ], {
+            maxWait: 10000,
+            timeout: 15000
+        });
 
         return res.status(200).json({
             status: "OK",
@@ -198,10 +208,10 @@ const getUserPins = async (req, res) => {
  */
 
 
-module.exports = { 
-    getProfile, 
-    getTransactions, 
-    getDashboard, 
-    getUserPins, 
-   
+module.exports = {
+    getProfile,
+    getTransactions,
+    getDashboard,
+    getUserPins,
+
 };

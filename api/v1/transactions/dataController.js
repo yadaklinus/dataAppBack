@@ -4,7 +4,7 @@ const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkVal
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
-const { isNetworkError } = require('@/lib/financialSafety');
+const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
 const purchaseDataSchema = z.object({
@@ -156,6 +156,9 @@ const purchaseData = async (req, res) => {
             });
 
             return { transaction, requestId };
+        }, {
+            maxWait: 15000,
+            timeout: 30000
         });
 
         try {
@@ -201,19 +204,7 @@ const purchaseData = async (req, res) => {
                 });
             }
 
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: {
-                        balance: { increment: sellingPrice },
-                        totalSpent: { decrement: sellingPrice }
-                    }
-                })
-            ]);
+            await safeRefund(prisma, userId, sellingPrice, result.transaction.id);
 
             return res.status(502).json({
                 status: "ERROR",
@@ -252,20 +243,13 @@ const getDataStatus = async (req, res) => {
                     });
                 }
                 else if (queryResult && queryResult.status === "FAILED") {
-                    const updatedData = await prisma.$transaction([
-                        prisma.transaction.update({
+                    const refundSuccess = await safeRefund(prisma, txn.userId, txn.amount, txn.id);
+                    if (refundSuccess) {
+                        txn = await prisma.transaction.findUnique({
                             where: { id: txn.id },
-                            data: { status: TransactionStatus.FAILED }
-                        }),
-                        prisma.wallet.update({
-                            where: { userId: txn.userId },
-                            data: {
-                                balance: { increment: txn.amount },
-                                totalSpent: { decrement: txn.amount }
-                            }
-                        })
-                    ]);
-                    txn = { ...updatedData[0], user: txn.user };
+                            include: { user: { select: { fullName: true, email: true } } }
+                        });
+                    }
                 }
             } catch (queryError) {
                 console.error("Auto-sync query failed:", queryError.message);

@@ -105,6 +105,9 @@ const handleChargeSuccess = async (data) => {
         });
 
         console.log(`[Paystack Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
+    }, {
+        maxWait: 10000,
+        timeout: 15000
     });
 };
 

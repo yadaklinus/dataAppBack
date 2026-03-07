@@ -4,7 +4,8 @@ const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
-const { isNetworkError } = require('@/lib/financialSafety');
+const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
+const { normalizeProviderDate } = require('@/lib/dateUtils');
 const bcrypt = require('bcryptjs');
 // --- SCHEMAS ---
 
@@ -185,6 +186,7 @@ const purchaseSubscription = async (req, res) => {
                         packageCode,
                         packageName: packageName,
                         smartCardNo,
+                        dueDate: normalizeProviderDate(verification.Due_Date),
                         customerName: customerName,
                         recipient: user.phoneNumber,
                         ...(idempotencyKey && { idempotencyKey })
@@ -193,6 +195,9 @@ const purchaseSubscription = async (req, res) => {
             });
 
             return { transaction, requestId };
+        }, {
+            maxWait: 15000,
+            timeout: 30000
         });
 
         // 4. Call Provider
@@ -242,20 +247,8 @@ const purchaseSubscription = async (req, res) => {
                 });
             }
 
-            // 5. AUTO-REFUND
-            await prisma.$transaction([
-                prisma.transaction.update({
-                    where: { id: result.transaction.id },
-                    data: { status: TransactionStatus.FAILED }
-                }),
-                prisma.wallet.update({
-                    where: { userId },
-                    data: {
-                        balance: { increment: amountToDeduct },
-                        totalSpent: { decrement: amountToDeduct }
-                    }
-                })
-            ]);
+            // 5. AUTO-REFUND with retry logic
+            await safeRefund(prisma, userId, amountToDeduct, result.transaction.id);
 
             return res.status(502).json({
                 status: "ERROR",

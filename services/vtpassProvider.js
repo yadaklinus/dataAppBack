@@ -1,5 +1,6 @@
 const axios = require('@/lib/providerClient');
 const crypto = require('crypto');
+const { normalizeProviderDate } = require('@/lib/dateUtils');
 
 /**
  * VTPass API Integration Service
@@ -384,7 +385,8 @@ const verifySmartCard = async (cableTV, smartCardNo) => {
                 customer_name: data.content.Customer_Name,
                 Current_Bouquet: data.content.Current_Bouquet,
                 Renewal_Amount: data.content.Renewal_Amount,
-                Status: data.content.Status
+                Status: data.content.Status,
+                dueDate: normalizeProviderDate(data.content.Due_Date)
             };
         }
 
@@ -447,13 +449,14 @@ const verifyMeter = async (discoCode, meterNo, meterType) => {
 
         console.log("VTPass Verify Meter Response:", response.data);
 
-        if (data.code === "000" && data.content) {
+        console.log('error' in data.content)
+
+        if (data.code === "000" && data.content && !('error' in data.content)) {
             return {
                 customer_name: data.content.Customer_Name,
                 Address: data.content.Address,
                 Meter_Number: data.content.Meter_Number,
                 minAmount: data.content.Minimum_Amount || data.content.Min_Purchase_Amount,
-
             };
         }
 
