@@ -2,7 +2,7 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const eduProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-const { generateRef } = require('@/lib/crypto');
+const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
@@ -144,13 +144,22 @@ const purchasePin = async (req, res) => {
             const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
             if (!isPinValid) throw new Error("Invalid transaction PIN");
 
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
+            const walletUpdate = await tx.wallet.updateMany({
+                where: {
+                    userId,
+                    balance: { gte: pinCost }
+                },
+                data: {
+                    balance: { decrement: pinCost },
+                    totalSpent: { increment: pinCost }
+                }
+            });
 
-            if (!wallet || Number(wallet.balance) < pinCost) {
+            if (walletUpdate.count === 0) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("EDU");
+            const requestId = generateVTPassRef("EDU");
 
             // Build metadata
             const txMetadata = {
@@ -171,14 +180,6 @@ const purchasePin = async (req, res) => {
                     status: TransactionStatus.PENDING,
                     reference: requestId,
                     metadata: txMetadata
-                }
-            });
-
-            await tx.wallet.update({
-                where: { userId },
-                data: {
-                    balance: { decrement: pinCost },
-                    totalSpent: { increment: pinCost }
                 }
             });
 
@@ -210,24 +211,6 @@ const purchasePin = async (req, res) => {
                     }
                 }
             });
-
-            // 🟢 Emit WebSocket Event
-            const { getIO } = require('@/lib/socket');
-            try {
-                getIO().to(userId).emit('transaction_update', {
-                    status: 'SUCCESS',
-                    type: 'EDUCATION',
-                    amount: pinCost,
-                    reference: result.requestId,
-                    metadata: {
-                        provider,
-                        examType,
-                        cardDetails: providerResponse.cardDetails
-                    }
-                });
-            } catch (socketErr) {
-                console.error("[Socket Error]", socketErr.message);
-            }
 
             return res.status(200).json({
                 status: "OK",

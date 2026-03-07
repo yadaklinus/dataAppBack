@@ -72,6 +72,48 @@ const handleFlutterwaveWebhook = async (req, res) => {
         let walletCreditAmount = 0;
         let isExistingTransaction = false;
 
+        // CASE: Flight Payment
+        if (reference && reference.startsWith('FLT-')) {
+            const flightTx = await prisma.flightTransaction.findUnique({
+                where: { reference },
+                include: { wallet: true }
+            });
+
+            if (!flightTx) {
+                console.error(`[Webhook] Unknown Flight reference: ${reference}`);
+                return;
+            }
+
+            await prisma.$transaction(async (tx) => {
+                const flightReq = await tx.flightBookingRequest.findUnique({
+                    where: { id: flightTx.flightRequestId }
+                });
+
+                if (flightReq.status !== 'QUOTED') {
+                    console.log(`[Webhook] Flight ${flightReq.id} already processed.`);
+                    return;
+                }
+
+                await tx.flightBookingRequest.update({
+                    where: { id: flightTx.flightRequestId },
+                    data: { status: 'PAID_PROCESSING' }
+                });
+
+                await tx.flightRequestActivity.create({
+                    data: {
+                        requestId: flightTx.flightRequestId,
+                        userId: flightTx.wallet.userId,
+                        previousState: flightReq.status,
+                        newState: 'PAID_PROCESSING',
+                        actionDetails: `User paid NGN ${totalPaidByCustomer} via Flutterwave Transfer`
+                    }
+                });
+                console.log(`[Webhook] Flight Payment SUCCESS: Request ${flightTx.flightRequestId}`);
+            });
+
+            return; // Exit early, no wallet funding for flights
+        }
+
         // CASE A: Standard Gateway (Card/USSD)
         if (reference && reference.startsWith('FUND-')) {
             const existingTx = await prisma.transaction.findUnique({
@@ -181,18 +223,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                         balance: walletCreditAmount
                     }
                 });
-
-                // 🟢 Emit WebSocket Event for Wallet Funding
-                const { getIO } = require('@/lib/socket');
-                try {
-                    getIO().to(userId).emit('wallet_funded', {
-                        amount: walletCreditAmount,
-                        method: data.payment_type || 'transfer',
-                        reference: reference
-                    });
-                } catch (socketErr) {
-                    console.error("[Socket Error]", socketErr.message);
-                }
 
                 console.log(`[Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
             }

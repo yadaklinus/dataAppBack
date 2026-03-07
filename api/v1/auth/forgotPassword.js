@@ -3,6 +3,9 @@ const prisma = require('@/lib/prisma');
 const sendEmail = require('@/lib/mailer');
 const { generateOtpEmailTemplate } = require('@/lib/emailTemplates');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+
+const SALT_ROUNDS = 10;
 
 const forgotPasswordSchema = z.object({
     email: z.string().email("Invalid email format").toLowerCase().trim(),
@@ -38,11 +41,14 @@ const forgotPassword = async (req, res) => {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
+        // Hash OTP before storing
+        const hashedOtp = await bcrypt.hash(otp, SALT_ROUNDS);
+
         // Save OTP to database
         await prisma.passwordResetOTP.create({
             data: {
                 email,
-                otp,
+                otp: hashedOtp,
                 expiresAt
             }
         });

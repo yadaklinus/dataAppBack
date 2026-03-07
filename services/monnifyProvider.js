@@ -183,8 +183,58 @@ const createVirtualAccount = async (params) => {
     };
 };
 
+/**
+ * Create Dynamic Account for one-time payments (e.g., Flights)
+ */
+const createDynamicAccount = async (amount, customerName, customerEmail, paymentReference, paymentDescription = "Flight Payment") => {
+    const token = await getAccessToken();
+
+    // Step 1: Initialize the Transaction
+    const initResponse = await axios.post(`${MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`, {
+        amount: Number(amount),
+        customerName: customerName || "Customer",
+        customerEmail,
+        paymentReference,
+        paymentDescription,
+        currencyCode: "NGN",
+        contractCode: MONNIFY_CONTRACT_CODE,
+        paymentMethods: ["ACCOUNT_TRANSFER"]
+    }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const initJson = initResponse.data;
+    if (!initJson.requestSuccessful) {
+        throw new Error(initJson.responseMessage || "Monnify initialization failed");
+    }
+
+    const transactionReference = initJson.responseBody.transactionReference;
+
+    // Step 2: Get the Dynamic Account
+    const bankResponse = await axios.post(`${MONNIFY_BASE_URL}/api/v1/merchant/bank-transfer/init-payment`, {
+        transactionReference
+    }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const bankJson = bankResponse.data;
+    if (!bankJson.requestSuccessful) {
+        throw new Error(bankJson.responseMessage || "Monnify dynamic account creation failed");
+    }
+
+    const body = bankJson.responseBody;
+    const primaryAccount = body.accounts[0];
+
+    return {
+        ...bankJson.responseBody,
+        transactionReference,
+        paymentReference
+    };
+};
+
 module.exports = {
     initializePayment,
     verifyTransaction,
-    createVirtualAccount
+    createVirtualAccount,
+    createDynamicAccount
 };

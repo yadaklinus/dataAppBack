@@ -1,6 +1,5 @@
 const prisma = require('@/lib/prisma');
 const { TransactionStatus } = require('@prisma/client');
-const { getIO } = require('@/lib/socket');
 
 /**
  * VTPass Webhook Handler
@@ -106,21 +105,6 @@ const processTransactionUpdate = async (data) => {
             }
         });
 
-        // Emit Socket event to User for real-time frontend update
-        try {
-            getIO().to(userId).emit('transaction_update', {
-                status: 'SUCCESS',
-                type: existingTx.type,
-                amount: existingTx.amount,
-                reference: requestId,
-                token: tokenToSave,
-                cardDetails: cardDetailsToSave,
-                metadata: updatedMetadata
-            });
-        } catch (socketErr) {
-            console.error("[Socket Error]", socketErr.message);
-        }
-
         console.log(`[VTPass Webhook] SUCCESS: Ref ${requestId} delivered. Token: ${tokenToSave ? 'Yes' : 'No'}`);
 
     } else if (providerStatus === 'reversed' || code === '040' || providerStatus === 'failed') {
@@ -154,19 +138,6 @@ const processTransactionUpdate = async (data) => {
                 }
             });
         });
-
-        // Emit Socket event to notify User
-        try {
-            getIO().to(userId).emit('transaction_update', {
-                status: 'FAILED',
-                type: existingTx.type,
-                amount: amountToRefund,
-                reference: requestId,
-                message: "Transaction reversed, waller refunded."
-            });
-        } catch (socketErr) {
-            console.error("[Socket Error]", socketErr.message);
-        }
 
         console.log(`[VTPass Webhook] REVERSED: Ref ${requestId}. Refunded ₦${amountToRefund} to user ${userId}.`);
     } else {

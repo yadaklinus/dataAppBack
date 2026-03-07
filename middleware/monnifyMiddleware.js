@@ -49,7 +49,49 @@ const handleMonnifyWebhook = async (req, res) => {
         let walletCreditAmount = 0;
         const productType = eventData.product?.type;
 
-        // 4. Determine Association (Gateway vs Dedicated Account)
+        // 4. Determine Association
+        if (paymentRef && paymentRef.startsWith('FLT-')) {
+            // FLIGHT PAYMENT BRANCH
+            const flightTx = await prisma.flightTransaction.findUnique({
+                where: { reference: paymentRef },
+                include: { wallet: true }
+            });
+
+            if (!flightTx) {
+                console.error(`[Monnify Webhook] Unknown Flight ref: ${paymentRef}`);
+                return;
+            }
+
+            await prisma.$transaction(async (tx) => {
+                const flightReq = await tx.flightBookingRequest.findUnique({
+                    where: { id: flightTx.flightRequestId }
+                });
+
+                if (flightReq.status !== 'QUOTED') {
+                    console.log(`[Monnify Webhook] Flight ${flightReq.id} already processed.`);
+                    return;
+                }
+
+                await tx.flightBookingRequest.update({
+                    where: { id: flightTx.flightRequestId },
+                    data: { status: 'PAID_PROCESSING' }
+                });
+
+                await tx.flightRequestActivity.create({
+                    data: {
+                        requestId: flightTx.flightRequestId,
+                        userId: flightTx.wallet.userId,
+                        previousState: flightReq.status,
+                        newState: 'PAID_PROCESSING',
+                        actionDetails: `User paid NGN ${amountPaid} via Monnify Transfer`
+                    }
+                });
+                console.log(`[Monnify Webhook] Flight Payment SUCCESS: Request ${flightTx.flightRequestId}`);
+            });
+
+            return; // Flight payments do not credit wallet, exit early.
+        }
+
         if (productType === 'RESERVED_ACCOUNT') {
             const accountRef = eventData.product.reference;
             const kycRecord = await prisma.kycData.findUnique({

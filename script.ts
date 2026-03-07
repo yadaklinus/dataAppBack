@@ -24,8 +24,6 @@ import adminRouterV1 from '@/routes/adminRoutes';
 import paystackRouterV1 from '@/routes/paystackRoutes';
 import vtpassWebhookRouterV1 from '@/routes/vtpassWebhookRoutes';
 import flightRouterV1 from '@/routes/flightRoutes';
-import { createServer } from 'http';
-// import { initSocket } from '@/lib/socket';
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
 import { startNelloByteStatusJob } from './jobs/nelloByteStatusJob';
@@ -46,6 +44,31 @@ app.set('trust proxy', 1);
 // 3. Security & Cross-Origin
 app.use(statusMonitor()); // Real-time dashboard at /status
 app.use(morgan('dev')); // Structured request logging
+
+// ==========================================
+// TEST ROUTES (Placed before Helmet to avoid CSP blocking inline scripts/CDNs)
+// ==========================================
+
+app.post("/api/v1/test-webhook", (req: Request, res: Response) => {
+    console.log("\n================ [TEST WEBHOOK RECEIVED (POST)] ================");
+    console.log("Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("Body:", JSON.stringify(req.body, null, 2));
+    console.log("Query:", JSON.stringify(req.query, null, 2));
+    console.log("================================================================\n");
+    res.status(200).json({ status: "success", message: "Webhook received successfully" });
+});
+
+app.get("/api/v1/test-webhook", (req: Request, res: Response) => {
+    console.log("\n================ [TEST WEBHOOK RECEIVED (GET)] ================");
+    console.log("Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("Query:", JSON.stringify(req.query, null, 2));
+    console.log("===============================================================\n");
+    res.status(200).json({ status: "success", message: "Webhook GET received successfully" });
+});
+
+// ==========================================
+// Security & Middlewares
+// ==========================================
 app.use(helmet());
 app.use(cors({
     origin: '*',
@@ -131,13 +154,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 //startPaystackTransactionSync();
 startFlightStatusJob();
 
-// const httpServer = createServer(app);
-
-// Initialize Socket.io
-// initSocket(httpServer);
-
 app.listen(PORT, () => {
     console.log(`[Server] Mufti Pay running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
-    console.log(`[Socket] Real-time engine initialized.`);
 });

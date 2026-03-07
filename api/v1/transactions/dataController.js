@@ -3,7 +3,7 @@ const vtpassProvider = require('@/services/vtpassProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
-const { generateRef } = require('@/lib/crypto');
+const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
@@ -71,6 +71,47 @@ const purchaseData = async (req, res) => {
         sellingPrice = selectedPlan.SELLING_PRICE;
         planName = selectedPlan.name;
 
+        // --- IDEMPOTENCY CHECK ---
+        const idempotencyKey = req.headers['x-idempotency-key'];
+
+        if (idempotencyKey) {
+            // Explicit Idempotency
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.DATA,
+                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
+                }
+            });
+            if (existingTx) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "A transaction with this idempotency key has already been processed."
+                });
+            }
+        } else {
+            // Fallback Time-based Deduplication (60 seconds)
+            const sixtySecondsAgo = new Date(Date.now() - 60000);
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.DATA,
+                    amount: sellingPrice,
+                    createdAt: { gte: sixtySecondsAgo },
+                    metadata: {
+                        path: ['recipient'], equals: cleanPhone,
+                    }
+                }
+            });
+
+            if (existingTx && existingTx.metadata && existingTx.metadata.network === network && existingTx.metadata.planId === planId) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "Identical transaction detected within the last minute. Please wait before retrying."
+                });
+            }
+        }
+
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
             const user = await tx.user.findUnique({ where: { id: userId } });
@@ -80,13 +121,22 @@ const purchaseData = async (req, res) => {
             const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
             if (!isPinValid) throw new Error("Invalid transaction PIN");
 
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
+            const walletUpdate = await tx.wallet.updateMany({
+                where: {
+                    userId,
+                    balance: { gte: sellingPrice }
+                },
+                data: {
+                    balance: { decrement: sellingPrice },
+                    totalSpent: { increment: sellingPrice }
+                }
+            });
 
-            if (!wallet || Number(wallet.balance) < sellingPrice) {
+            if (walletUpdate.count === 0) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("DAT")
+            const requestId = generateVTPassRef("DAT")
 
             const transaction = await tx.transaction.create({
                 data: {
@@ -99,16 +149,9 @@ const purchaseData = async (req, res) => {
                         network,
                         recipient: cleanPhone,
                         planName: planName,
-                        planId: planId
+                        planId: planId,
+                        ...(idempotencyKey && { idempotencyKey })
                     }
-                }
-            });
-
-            await tx.wallet.update({
-                where: { userId },
-                data: {
-                    balance: { decrement: sellingPrice },
-                    totalSpent: { increment: sellingPrice }
                 }
             });
 
@@ -140,20 +183,6 @@ const purchaseData = async (req, res) => {
                     message: "Data purchase is processing. Please check status history in a moment.",
                     transactionId: result.requestId
                 });
-            }
-
-            // 🟢 Emit WebSocket Event
-            const { getIO } = require('@/lib/socket');
-            try {
-                getIO().to(userId).emit('transaction_update', {
-                    status: 'SUCCESS',
-                    type: 'DATA',
-                    amount: sellingPrice,
-                    reference: result.requestId,
-                    metadata: { planName: planName }
-                });
-            } catch (socketErr) {
-                console.error("[Socket Error]", socketErr.message);
             }
 
             return res.status(200).json({

@@ -102,6 +102,7 @@ All requests must include the `Authorization: Bearer <token>` header (except pub
 | `/auth/forgot-password` | POST | `email` | Generates OTP & sends email |
 | `/auth/verify-otp` | POST | `email, otp` | Verifies the reset OTP |
 | `/auth/reset-password` | POST | `email, otp, password` | Resets the user password |
+| `/auth/change-pin` | POST | `password, newPin` | **Requires Auth:** Changes the Transaction PIN |
 
 #### Forgot Password Flow Details
 **1. Request OTP**
@@ -118,6 +119,13 @@ All requests must include the `Authorization: Bearer <token>` header (except pub
 - **Endpoint**: `POST /auth/reset-password`
 - **Body**: `{ "email": "user@example.com", "otp": "123456", "password": "NewSecurePassword123!" }`
 - **Response (200 OK)**: `{ "status": "OK", "message": "Password reset successful..." }`
+
+**4. Change/Reset Transaction PIN**
+- **Endpoint**: `POST /api/v1/auth/change-pin`
+- **Headers**: `Authorization: Bearer <Your_Access_Token>`
+- **Body**: `{ "password": "UserLoginPassword123!", "newPin": "1234" }`
+- **Response (200 OK)**: `{ "status": "OK", "message": "Transaction PIN successfully updated." }`
+- **Note**: The user must provide their main account login password to authorize this change.
 
 ### 👤 User & Dashboard
 | Endpoint | Method | Description |

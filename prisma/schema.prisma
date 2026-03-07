@@ -201,6 +201,7 @@ model PasswordResetOTP {
   id        String   @id @default(uuid())
   email     String
   otp       String
+  attempts  Int      @default(0)
   expiresAt DateTime
   createdAt DateTime @default(now())
 

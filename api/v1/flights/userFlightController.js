@@ -1,5 +1,7 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
+const monnifyProvider = require('@/services/monnifyProvider');
+const paymentProvider = require('@/services/paymentProvider');
 //const { generateRef } = require('@/utils/generateRef'); // Assuming a ref generator exists, or we will use crypto
 
 // Helper for generating refs
@@ -215,6 +217,47 @@ const selectOptionAndPassengers = async (req, res) => {
             return res.status(400).json({ status: "ERROR", message: "Invalid option selected from available choices." });
         }
 
+        const totalExpected = flightRequest.adults + flightRequest.children + flightRequest.infants;
+        if (passengers.length !== totalExpected) {
+            return res.status(400).json({
+                status: "ERROR",
+                message: `Please provide details for exactly ${totalExpected} passengers (${flightRequest.adults} Adults, ${flightRequest.children} Children, ${flightRequest.infants} Infants).`
+            });
+        }
+
+        const departureDate = selectedFlightDate ? new Date(selectedFlightDate) : new Date(flightRequest.targetDate);
+        let currentAdults = 0;
+        let currentChildren = 0;
+        let currentInfants = 0;
+
+        for (const passenger of passengers) {
+            const dob = new Date(passenger.dateOfBirth);
+            if (isNaN(dob.getTime())) {
+                return res.status(400).json({ status: "ERROR", message: "Invalid date of birth provided." });
+            }
+
+            let age = departureDate.getFullYear() - dob.getFullYear();
+            const m = departureDate.getMonth() - dob.getMonth();
+            if (m < 0 || (m === 0 && departureDate.getDate() < dob.getDate())) {
+                age--;
+            }
+
+            if (age < 2) {
+                currentInfants++;
+            } else if (age < 12) {
+                currentChildren++;
+            } else {
+                currentAdults++;
+            }
+        }
+
+        if (currentAdults !== flightRequest.adults || currentChildren !== flightRequest.children || currentInfants !== flightRequest.infants) {
+            return res.status(400).json({
+                status: "ERROR",
+                message: `Age mismatch. Booking requires ${flightRequest.adults} Adults (12+), ${flightRequest.children} Children (2-11), ${flightRequest.infants} Infants (Under 2). Provided dates of birth resulted in ${currentAdults} Adults, ${currentChildren} Children, and ${currentInfants} Infants.`
+            });
+        }
+
         // Atomic Transaction: Update request and insert passengers
         const updatedRequest = await prisma.$transaction(async (tx) => {
             // Unlink old passengers if any
@@ -276,17 +319,19 @@ const selectOptionAndPassengers = async (req, res) => {
 };
 
 /**
- * 4. User Pays for Quoted Flight (Atomic Wallet Deduction)
+ * 4. User Initiates Payment for Quoted Flight (Dynamic Account)
  * @route POST /api/v1/flights/user/:id/pay
  */
 const payForFlight = async (req, res) => {
     try {
         const requestId = req.params.id;
         const userId = req.user.id;
+        const { provider = 'MONNIFY' } = req.body;
 
-        // Start serializable database transaction to guarantee no race conditions
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error("User not found");
+
         const result = await prisma.$transaction(async (tx) => {
-            // 1. Lock the Flight Request matching the QUOTED state exactly
             const flightRequest = await tx.flightBookingRequest.findUnique({
                 where: { id: requestId }
             });
@@ -303,9 +348,7 @@ const payForFlight = async (req, res) => {
                 throw new Error("Staff has not set a selling price yet");
             }
 
-            // Verify Ticketing Time Limit has not expired
             if (flightRequest.ticketingTimeLimit && new Date() > new Date(flightRequest.ticketingTimeLimit)) {
-                // Auto-expire
                 await tx.flightBookingRequest.update({
                     where: { id: requestId },
                     data: { status: 'EXPIRED' }
@@ -320,53 +363,62 @@ const payForFlight = async (req, res) => {
 
             const paymentAmount = Number(flightRequest.sellingPrice);
 
-            // 2. Atomic Wallet Deduction (Let the database do the math)
-            // If balance drops below 0, Prisma will throw an error if constraints are set, or we manually check
-            const wallet = await tx.wallet.update({
-                where: { userId },
-                data: { balance: { decrement: paymentAmount } }
+            const wallet = await tx.wallet.findUnique({
+                where: { userId }
             });
 
-            if (Number(wallet.balance) < 0) {
-                throw new Error("Insufficient wallet balance");
+            if (!wallet) {
+                throw new Error("Wallet not found to link transaction");
             }
 
-            // 3. Create completely separate FlightTransaction record
+            // Check if there's already a transaction for this flight
+            let flightTx = await tx.flightTransaction.findUnique({
+                where: { flightRequestId: requestId }
+            });
+
             const txRef = generateFlightRef();
-            const flightTx = await tx.flightTransaction.create({
-                data: {
-                    walletId: wallet.id,
-                    type: 'PAYMENT',
-                    amount: paymentAmount,
-                    reference: txRef,
-                    flightRequestId: requestId
-                }
-            });
 
-            // 4. Update the Flight Request state to PAID_PROCESSING
-            const updatedRequest = await tx.flightBookingRequest.update({
-                where: { id: requestId, status: 'QUOTED' }, // Concurrency lock
-                data: { status: 'PAID_PROCESSING' }
-            });
+            if (!flightTx) {
+                flightTx = await tx.flightTransaction.create({
+                    data: {
+                        walletId: wallet.id,
+                        type: 'PAYMENT',
+                        amount: paymentAmount,
+                        reference: txRef,
+                        flightRequestId: requestId
+                    }
+                });
+            } else {
+                flightTx = await tx.flightTransaction.update({
+                    where: { id: flightTx.id },
+                    data: { reference: txRef }
+                });
+            }
 
-            // 5. Audit Trail
-            await tx.flightRequestActivity.create({
-                data: {
-                    requestId,
-                    userId,
-                    previousState: 'QUOTED',
-                    newState: 'PAID_PROCESSING',
-                    actionDetails: `User paid NGN ${paymentAmount} via wallet`
-                }
-            });
-
-            return { updatedRequest, flightTx };
+            return { paymentAmount, txRef: flightTx.reference };
         });
+
+        const paymentAmount = result.paymentAmount;
+        const txRef = result.txRef;
+
+        const customerName = user.fullName || "Customer";
+        const customerEmail = user.email;
+
+        let dynamicAccount;
+        if (provider.toUpperCase() === 'FLUTTERWAVE') {
+            dynamicAccount = await paymentProvider.createDynamicAccount(paymentAmount, customerName, customerEmail, txRef, "Flight Payment");
+        } else {
+            dynamicAccount = await monnifyProvider.createDynamicAccount(paymentAmount, customerName, customerEmail, txRef, "Flight Payment");
+        }
 
         res.status(200).json({
             status: "OK",
-            message: "Payment successful. Processing ticket.",
-            data: result
+            message: "Dynamic account generated. Please transfer funds to complete booking.",
+            data: {
+                paymentInstruction: dynamicAccount,
+                provider: provider.toUpperCase(),
+                transactionReference: txRef
+            }
         });
 
     } catch (error) {

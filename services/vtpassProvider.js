@@ -48,7 +48,8 @@ const handlePurchaseResponse = (data, requestId, defaultErrorMsg) => {
             orderId: data.content?.transactions?.transactionId || requestId,
             status: txStatus,
             token: data.token || data.purchased_code || data.metertoken || null,
-            units: data.units || null,
+            units: data.units || data.PurchasedUnits || data.Units,
+            address: data.CustomerAddress,
             provider: 'VTPASS'
         };
     }
@@ -250,6 +251,7 @@ const fetchAllDataPlansMapped = async () => {
  * 'amount' is still required in the payload but ignored by VTPass for variation-based services.
  */
 const buyData = async (network, variationCode, phoneNumber, requestId) => {
+    console.log("VTPass Data Request:", network, variationCode, phoneNumber, requestId);
     try {
         const serviceID = DATA_SERVICE_IDS[network.toUpperCase()];
         if (!serviceID) throw new Error("Invalid network selection for VTPass");
@@ -259,7 +261,7 @@ const buyData = async (network, variationCode, phoneNumber, requestId) => {
             serviceID: serviceID,
             billersCode: phoneNumber, // For data, phone goes in billersCode
             variation_code: variationCode,
-            amount: 100, // Amount is ignored for data subscriptions, but required by API schema
+            //amount: 100, // Amount is ignored for data subscriptions, but required by API schema
             phone: phoneNumber
         }, {
             headers: getPostHeaders()
@@ -313,7 +315,6 @@ const fetchAllCablePackagesMapped = async () => {
         { key: 'DSTV', name: 'DStv', id: 'dstv' },
         { key: 'GOTV', name: 'GOtv', id: 'gotv' },
         { key: 'STARTIMES', name: 'Startimes', id: 'startimes' },
-        { key: 'SHOWMAX', name: 'Showmax', id: 'showmax' }
     ];
 
     const results = await Promise.all(
@@ -450,7 +451,9 @@ const verifyMeter = async (discoCode, meterNo, meterType) => {
             return {
                 customer_name: data.content.Customer_Name,
                 Address: data.content.Address,
-                Meter_Number: data.content.Meter_Number
+                Meter_Number: data.content.Meter_Number,
+                minAmount: data.content.Minimum_Amount || data.content.Min_Purchase_Amount,
+
             };
         }
 

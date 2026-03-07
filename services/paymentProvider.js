@@ -134,8 +134,44 @@ const createVirtualAccount = async (params) => {
     return response.data.data;
 };
 
+/**
+ * Create Dynamic Account for one-time payments (e.g., Flights)
+ */
+const createDynamicAccount = async (amount, customerName, customerEmail, tx_ref, narration = "Flight Payment") => {
+    let firstname = "Mufti";
+    let lastname = "User";
+
+    if (customerName) {
+        const parts = customerName.split(' ');
+        firstname = parts[0];
+        if (parts.length > 1) {
+            lastname = parts.slice(1).join(' ');
+        }
+    }
+
+    const config = {
+        method: 'post',
+        url: `${FLW_BASE_URL}/virtual-account-numbers`,
+        data: {
+            email: customerEmail,
+            amount: amount,
+            currency: "NGN",
+            tx_ref: tx_ref,
+            firstname: firstname,
+            lastname: lastname,
+            is_permanent: false,
+            narration: narration
+        },
+        ...flwHeader
+    };
+
+    const response = await requestWithRetry(config);
+    return response.data.data;
+};
+
 module.exports = {
     initializePayment,
     createVirtualAccount,
-    verifyTransaction
+    verifyTransaction,
+    createDynamicAccount
 };

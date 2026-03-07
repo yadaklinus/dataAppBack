@@ -2,7 +2,7 @@ const prisma = require('@/lib/prisma');
 const pinProvider = require('@/services/pinProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
-const { generateRef } = require('@/lib/crypto')
+const { generateRef, generateVTPassRef } = require('@/lib/crypto')
 const { isNetworkError } = require('@/lib/financialSafety');
 
 /**
@@ -18,7 +18,7 @@ const purchasePinSchema = z.object({
 const printPins = async (req, res) => {
     const parsed = purchasePinSchema.safeParse(req.body);
     if (!parsed.success) {
-        return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
+        return res.status(400).json({ status: "ERROR", message: parsed.error.issues[0].message });
     }
 
     const { network, value, quantity } = parsed.data;
@@ -41,6 +41,49 @@ const printPins = async (req, res) => {
 
 
     try {
+        const totalCost = faceValue * qty;
+
+        // --- IDEMPOTENCY CHECK ---
+        const idempotencyKey = req.headers['x-idempotency-key'];
+
+        if (idempotencyKey) {
+            // Explicit Idempotency
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.RECHARGE_PIN,
+                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
+                }
+            });
+            if (existingTx) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "A transaction with this idempotency key has already been processed."
+                });
+            }
+        } else {
+            // Fallback Time-based Deduplication (60 seconds)
+            const sixtySecondsAgo = new Date(Date.now() - 60000);
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.RECHARGE_PIN,
+                    amount: totalCost,
+                    createdAt: { gte: sixtySecondsAgo },
+                    metadata: {
+                        path: ['network'], equals: network,
+                    }
+                }
+            });
+
+            if (existingTx && existingTx.metadata && existingTx.metadata.faceValue === faceValue && existingTx.metadata.quantity === qty) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "Identical transaction detected within the last minute. Please wait before retrying."
+                });
+            }
+        }
+
         const result = await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({ where: { userId } });
 
@@ -48,7 +91,7 @@ const printPins = async (req, res) => {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("PRT")
+            const requestId = generateVTPassRef("PRT")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -56,7 +99,12 @@ const printPins = async (req, res) => {
                     type: TransactionType.RECHARGE_PIN,
                     status: TransactionStatus.PENDING,
                     reference: requestId,
-                    metadata: { network, quantity: qty, faceValue }
+                    metadata: {
+                        network,
+                        quantity: qty,
+                        faceValue,
+                        ...(idempotencyKey && { idempotencyKey })
+                    }
                 }
             });
 

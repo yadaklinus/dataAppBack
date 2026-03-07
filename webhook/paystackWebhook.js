@@ -104,18 +104,6 @@ const handleChargeSuccess = async (data) => {
             }
         });
 
-        // 🟢 Emit WebSocket Event for Wallet Funding
-        const { getIO } = require('@/lib/socket');
-        try {
-            getIO().to(userId).emit('wallet_funded', {
-                amount: walletCreditAmount,
-                method: data.channel || 'paystack',
-                reference: reference
-            });
-        } catch (socketErr) {
-            console.error("[Socket Error]", socketErr.message);
-        }
-
         console.log(`[Paystack Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
     });
 };

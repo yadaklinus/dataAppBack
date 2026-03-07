@@ -2,7 +2,7 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const vtpassProvider = require('@/services/vtpassProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
-const { generateRef } = require('@/lib/crypto');
+const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
@@ -19,7 +19,6 @@ const purchaseElectricitySchema = z.object({
     meterNo: z.string().min(5),
     meterType: z.enum(["01", "02"]),
     amount: z.number().min(100, "Minimum purchase is ₦100").max(500000, "Maximum purchase limit exceeded"),
-    phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
     transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 });
 
@@ -87,32 +86,90 @@ const purchaseElectricity = async (req, res) => {
         });
     }
 
-    const { discoCode, meterNo, meterType, amount, phoneNo, transactionPin } = validation.data;
+    const { discoCode, meterNo, meterType, amount, transactionPin } = validation.data;
     const userId = req.user.id;
     const billAmount = Number(amount);
+    let user;
 
     try {
         // 1. Double-check meter (Safety)
         const typeStr = meterType === '01' ? 'prepaid' : 'postpaid';
         const verification = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
 
+        if (verification.minAmount > billAmount) {
+            return res.status(400).json({
+                status: "ERROR",
+                message: "Minimum purchase amount is ₦" + verification.minAmount
+            });
+        }
+
+        // --- IDEMPOTENCY CHECK ---
+        const idempotencyKey = req.headers['x-idempotency-key'];
+
+        if (idempotencyKey) {
+            // Explicit Idempotency
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.ELECTRICITY,
+                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
+                }
+            });
+            if (existingTx) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "A transaction with this idempotency key has already been processed."
+                });
+            }
+        } else {
+            // Fallback Time-based Deduplication (60 seconds)
+            const sixtySecondsAgo = new Date(Date.now() - 60000);
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.ELECTRICITY,
+                    amount: billAmount,
+                    createdAt: { gte: sixtySecondsAgo },
+                    metadata: {
+                        path: ['meterNo'], equals: meterNo,
+                    }
+                }
+            });
+
+            if (existingTx && existingTx.metadata && existingTx.metadata.discoCode === discoCode) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "Identical transaction detected within the last minute. Please wait before retrying."
+                });
+            }
+        }
+
         // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
-            const user = await tx.user.findUnique({ where: { id: userId } });
+            user = await tx.user.findUnique({ where: { id: userId } });
             if (!user) throw new Error("User not found");
             if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 
             const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
             if (!isPinValid) throw new Error("Invalid transaction PIN");
 
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
+            const walletUpdate = await tx.wallet.updateMany({
+                where: {
+                    userId,
+                    balance: { gte: billAmount }
+                },
+                data: {
+                    balance: { decrement: billAmount },
+                    totalSpent: { increment: billAmount }
+                }
+            });
 
-            if (!wallet || Number(wallet.balance) < billAmount) {
+            if (walletUpdate.count === 0) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("ELEC")
+            const requestId = generateVTPassRef("ELEC")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -127,17 +184,10 @@ const purchaseElectricity = async (req, res) => {
                         customerName: verification.customer_name,
                         address: verification.customer_address,
                         token: "",
-                        recipient: phoneNo,
-                        unit: ""
+                        recipient: user.phoneNumber,
+                        unit: "",
+                        ...(idempotencyKey && { idempotencyKey })
                     }
-                }
-            });
-
-            await tx.wallet.update({
-                where: { userId },
-                data: {
-                    balance: { decrement: billAmount },
-                    totalSpent: { increment: billAmount }
                 }
             });
 
@@ -152,7 +202,7 @@ const purchaseElectricity = async (req, res) => {
                 providerTypeStr,
                 meterNo,
                 billAmount,
-                phoneNo,
+                user.phoneNumber,
                 result.requestId
             );
 
@@ -168,8 +218,9 @@ const purchaseElectricity = async (req, res) => {
                     providerStatus: providerResponse.status || providerResponse.transactionstatus,
                     metadata: {
                         ...result.transaction.metadata,
+                        address: providerResponse.address,
                         token: providerResponse.token || providerResponse.metertoken,
-                        units: providerResponse.units
+                        units: providerResponse.units || providerResponse.PurchasedUnits
                     }
                 }
             });
@@ -180,24 +231,6 @@ const purchaseElectricity = async (req, res) => {
                     message: "Electricity payment is processing. Please check status history for your token.",
                     transactionId: result.requestId
                 });
-            }
-
-            // 🟢 Emit WebSocket Event
-            const { getIO } = require('@/lib/socket');
-            try {
-                getIO().to(userId).emit('transaction_update', {
-                    status: 'SUCCESS',
-                    type: 'ELECTRICITY',
-                    amount: billAmount,
-                    reference: result.requestId,
-                    metadata: {
-                        discoCode,
-                        meterNo,
-                        token: providerResponse.token || providerResponse.metertoken
-                    }
-                });
-            } catch (socketErr) {
-                console.error("[Socket Error]", socketErr.message);
             }
 
             return res.status(200).json({

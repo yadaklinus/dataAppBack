@@ -3,7 +3,7 @@ const vtpassProvider = require('@/services/vtpassProvider');
 const { validateNetworkMatch, normalizePhoneNumber } = require('@/lib/networkValidator');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { z } = require('zod');
-const { generateRef } = require('@/lib/crypto');
+const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
 
@@ -55,6 +55,47 @@ const purchaseAirtime = async (req, res) => {
     try {
         const sellingPrice = airtimeAmount;
 
+        // --- IDEMPOTENCY CHECK ---
+        const idempotencyKey = req.headers['x-idempotency-key'];
+
+        if (idempotencyKey) {
+            // Explicit Idempotency
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.AIRTIME,
+                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
+                }
+            });
+            if (existingTx) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "A transaction with this idempotency key has already been processed."
+                });
+            }
+        } else {
+            // Fallback Time-based Deduplication (60 seconds)
+            const sixtySecondsAgo = new Date(Date.now() - 60000);
+            const existingTx = await prisma.transaction.findFirst({
+                where: {
+                    userId,
+                    type: TransactionType.AIRTIME,
+                    amount: sellingPrice,
+                    createdAt: { gte: sixtySecondsAgo },
+                    metadata: {
+                        path: ['recipient'], equals: cleanPhone,
+                    }
+                }
+            });
+
+            if (existingTx && existingTx.metadata && existingTx.metadata.network === network) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "Identical transaction detected within the last minute. Please wait before retrying."
+                });
+            }
+        }
+
         // 1. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
@@ -65,13 +106,22 @@ const purchaseAirtime = async (req, res) => {
             const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
             if (!isPinValid) throw new Error("Invalid transaction PIN");
 
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
+            const walletUpdate = await tx.wallet.updateMany({
+                where: {
+                    userId,
+                    balance: { gte: sellingPrice }
+                },
+                data: {
+                    balance: { decrement: sellingPrice },
+                    totalSpent: { increment: sellingPrice }
+                }
+            });
 
-            if (!wallet || Number(wallet.balance) < sellingPrice) {
+            if (walletUpdate.count === 0) {
                 throw new Error("Insufficient wallet balance");
             }
 
-            const requestId = generateRef("AIR")
+            const requestId = generateVTPassRef("AIR")
             const transaction = await tx.transaction.create({
                 data: {
                     userId,
@@ -83,17 +133,9 @@ const purchaseAirtime = async (req, res) => {
                         network,
                         recipient: cleanPhone,
                         faceValue: airtimeAmount,
-                        profit: 0
+                        profit: 0,
+                        ...(idempotencyKey && { idempotencyKey })
                     }
-                }
-            });
-
-            // 2. Update Wallet: Deduct Balance AND Increment TotalSpent
-            await tx.wallet.update({
-                where: { userId },
-                data: {
-                    balance: { decrement: sellingPrice },
-                    totalSpent: { increment: sellingPrice } // Increment accountability field
                 }
             });
 
@@ -126,19 +168,6 @@ const purchaseAirtime = async (req, res) => {
                     message: "Airtime purchase is processing. Please check status history in a moment.",
                     transactionId: result.requestId
                 });
-            }
-
-            // 🟢 Emit WebSocket Event for Real-time Update
-            const { getIO } = require('@/lib/socket');
-            try {
-                getIO().to(userId).emit('transaction_update', {
-                    status: 'SUCCESS',
-                    type: 'AIRTIME',
-                    amount: airtimeAmount,
-                    reference: result.requestId
-                });
-            } catch (socketErr) {
-                console.error("[Socket Error]", socketErr.message);
             }
 
             return res.status(200).json({
