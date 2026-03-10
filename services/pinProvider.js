@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('@/lib/providerClient');
 
 /**
  * Nellobyte Systems EPIN (Recharge Card Printing) Integration Service

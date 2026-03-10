@@ -225,6 +225,8 @@ const createDynamicAccount = async (amount, customerName, customerEmail, payment
     const body = bankJson.responseBody;
     const primaryAccount = body.accounts[0];
 
+    console.log(body)
+
     return {
         ...bankJson.responseBody,
         transactionReference,

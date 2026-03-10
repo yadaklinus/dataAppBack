@@ -64,6 +64,15 @@ const initGatewayFunding = async (req, res) => {
             }
         });
 
+        console.log(
+            "status", "OK",
+            "accountNumber", primaryAccount.accountNumber,
+            "accountName", primaryAccount.accountName,
+            "bankName:", primaryAccount.bankName,
+            "amount:", paymentData.amount,
+            "reference:", paymentData.paymentReference
+        )
+
         res.status(200).json({
             status: "OK",
             accountNumber: primaryAccount.accountNumber,

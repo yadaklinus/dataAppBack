@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const prisma = require('@/lib/prisma');
-const axios = require('axios');
+const axios = require('@/lib/providerClient');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 
 const USER_ID = process.env.NELLOBYTE_USER_ID;

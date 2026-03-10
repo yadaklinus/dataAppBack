@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('./lib/providerClient');
 const xml2js = require('xml2js');
 require('dotenv').config();
 
