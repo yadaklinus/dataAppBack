@@ -137,9 +137,11 @@ const createVirtualAccount = async (params) => {
 /**
  * Create Dynamic Account for one-time payments (e.g., Flights)
  */
-const createDynamicAccount = async (amount, customerName, customerEmail, tx_ref, narration = "Flight Payment") => {
+const createDynamicAccount = async (amount, customerName, customerEmail, tx_ref) => {
     let firstname = "Mufti";
     let lastname = "User";
+
+    const narration = `Mufti Pay - Wallet funding ${amount}`;
 
     if (customerName) {
         const parts = customerName.split(' ');

@@ -82,7 +82,7 @@ const initializePayment = async (userId, amount, email, fullName) => {
         currencyCode: "NGN",
         contractCode: MONNIFY_CONTRACT_CODE,
         redirectUrl: `${baseUrl}/dashboard`,
-        paymentMethods: ["CARD", "ACCOUNT_TRANSFER"]
+        paymentMethods: ["ACCOUNT_TRANSFER"]
     }, {
         headers: { 'Authorization': `Bearer ${token}` }
     });

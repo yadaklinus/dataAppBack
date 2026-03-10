@@ -30,37 +30,47 @@ const initGatewayFunding = async (req, res) => {
         if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
 
         /**
-         * 1. Initialize Monnify Transaction
-         * We pass the requested amount. The provider logic or Monnify internally 
-         * determines the final charge and returns the tx_ref.
+         * 1. Initialize Monnify Dynamic Account
+         * We pass the requested amount and user details to get a one-time bank account.
          */
-        const paymentData = await monnifyProvider.initializePayment(
-            userId,
+        const paymentData = await monnifyProvider.createDynamicAccount(
             amount,
+            user.fullName || "Mufti Pay User",
             user.email,
-            user.fullName || "Mufti Pay User"
+            `FUND-MNFY-${Date.now()}-${userId}`,
+            "Wallet Top-up"
         );
 
+        const primaryAccount = paymentData.accounts[0];
+
         // 2. Create Pending Transaction Record
-        // We store the amount the user intends to have credited to their wallet.
         await prisma.transaction.create({
             data: {
                 userId,
                 amount: amount,
                 type: TransactionType.WALLET_FUNDING,
                 status: TransactionStatus.PENDING,
-                reference: paymentData.tx_ref,
+                reference: paymentData.paymentReference,
                 metadata: {
                     provider: "MONNIFY",
-                    transactionReference: paymentData.transactionReference
+                    transactionReference: paymentData.transactionReference,
+                    accountDetails: {
+                        accountNumber: primaryAccount.accountNumber,
+                        accountName: primaryAccount.accountName,
+                        bankName: primaryAccount.bankName,
+                        amount: paymentData.amount
+                    }
                 }
             }
         });
 
         res.status(200).json({
             status: "OK",
-            paymentLink: paymentData.link,
-            reference: paymentData.tx_ref
+            accountNumber: primaryAccount.accountNumber,
+            accountName: primaryAccount.accountName,
+            bankName: primaryAccount.bankName,
+            amount: paymentData.amount,
+            reference: paymentData.paymentReference
         });
     } catch (error) {
         console.error("[Monnify Init Error]:", error.message);

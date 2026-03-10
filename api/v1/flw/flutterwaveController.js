@@ -28,19 +28,50 @@ const initGatewayFunding = async (req, res) => {
 
     try {
         const user = await prisma.user.findUnique({ where: { id: userId } });
-        const { link, tx_ref } = await paymentProvider.initializePayment(userId, amount, user.email, user.fullName);
+        if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
 
+        const tx_ref = `FUND-FLW-${Date.now()}-${userId}`;
+
+        /**
+         * 1. Initialize Flutterwave Dynamic Account
+         * Returns account_number, bank_name, amount, etc.
+         */
+        const accountData = await paymentProvider.createDynamicAccount(
+            amount,
+            user.fullName,
+            user.email,
+            tx_ref,
+            "Wallet Top-up"
+        );
+
+        // 2. Create Pending Transaction Record
         await prisma.transaction.create({
             data: {
                 userId,
                 amount,
                 type: TransactionType.WALLET_FUNDING,
                 status: TransactionStatus.PENDING,
-                reference: tx_ref
+                reference: tx_ref,
+                metadata: {
+                    provider: "FLUTTERWAVE",
+                    flw_ref: accountData.flw_ref,
+                    accountDetails: {
+                        accountNumber: accountData.account_number,
+                        bankName: accountData.bank_name,
+                        amount: accountData.amount
+                    }
+                }
             }
         });
 
-        res.status(200).json({ status: "OK", paymentLink: link });
+        res.status(200).json({
+            status: "OK",
+            accountNumber: accountData.account_number,
+            accountName: "Flutterwave / Mufti Pay", // FLW doesn't always return a dynamic account name in the same way Monnify does
+            bankName: accountData.bank_name,
+            amount: accountData.amount,
+            reference: tx_ref
+        });
     } catch (error) {
         console.error("Funding Init Error:", error.response?.data || error.message);
         res.status(500).json({ status: "ERROR", message: "Failed to initialize payment gateway" });

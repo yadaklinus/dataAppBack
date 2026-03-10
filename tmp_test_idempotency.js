@@ -4,7 +4,7 @@ require('dotenv').config();
 // Create a test script to verify the idempotency implementation
 // This script assumes there's a local server running and it has a valid token
 
-const BASE_URL = 'http://localhost:5000/api/v1'; // Update to your local server port
+const BASE_URL = 'http://localhost:3009/api/v1'; // Update to your local server port
 const TOKEN = process.env.TEST_TOKEN || ''; // Add a valid token here to test
 
 async function testIdempotency() {
