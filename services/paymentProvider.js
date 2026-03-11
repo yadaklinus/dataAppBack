@@ -168,6 +168,7 @@ const createDynamicAccount = async (amount, customerName, customerEmail, tx_ref)
     };
 
     const response = await requestWithRetry(config);
+    console.log("response", response.data.data);
     return response.data.data;
 };
 

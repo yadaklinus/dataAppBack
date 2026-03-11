@@ -145,6 +145,8 @@ const createVirtualAccount = async (params) => {
 
     const accountReference = `VA-REF-${Date.now()}-${userId}`;
 
+
+
     // BUILDER TIP: When a BVN is provided, Monnify ignores custom prefixes 
     // like "Mufti Pay -". It's better to send the raw fullName to ensure 
     // the KYC matching algorithm passes.
@@ -187,7 +189,15 @@ const createVirtualAccount = async (params) => {
  * Create Dynamic Account for one-time payments (e.g., Flights)
  */
 const createDynamicAccount = async (amount, customerName, customerEmail, paymentReference, paymentDescription = "Flight Payment") => {
+
+    console.log("amount", amount);
+    console.log("customerName", customerName);
+    console.log("customerEmail", customerEmail);
+    console.log("paymentReference", paymentReference);
+    console.log("paymentDescription", paymentDescription);
+
     const token = await getAccessToken();
+
 
     // Step 1: Initialize the Transaction
     const initResponse = await axios.post(`${MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`, {
@@ -203,7 +213,12 @@ const createDynamicAccount = async (amount, customerName, customerEmail, payment
         headers: { 'Authorization': `Bearer ${token}` }
     });
 
+
+
     const initJson = initResponse.data;
+
+    console.log("initJson", initJson);
+
     if (!initJson.requestSuccessful) {
         throw new Error(initJson.responseMessage || "Monnify initialization failed");
     }
@@ -223,9 +238,6 @@ const createDynamicAccount = async (amount, customerName, customerEmail, payment
     }
 
     const body = bankJson.responseBody;
-    const primaryAccount = body.accounts[0];
-
-    console.log(body)
 
     return {
         ...bankJson.responseBody,

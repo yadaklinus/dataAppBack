@@ -20,6 +20,9 @@ const initGatewayFunding = async (req, res) => {
     const { amount } = req.body;
     const userId = req.user.id;
 
+    console.log("amount", amount);
+    console.log("userId", userId);
+
     if (!amount || amount < 100) {
         return res.status(400).json({ status: "ERROR", message: "Minimum funding amount is ₦100" });
     }
@@ -33,6 +36,8 @@ const initGatewayFunding = async (req, res) => {
          * 1. Initialize Monnify Dynamic Account
          * We pass the requested amount and user details to get a one-time bank account.
          */
+
+
         const paymentData = await monnifyProvider.createDynamicAccount(
             amount,
             user.fullName || "Mufti Pay User",
@@ -41,7 +46,9 @@ const initGatewayFunding = async (req, res) => {
             "Wallet Top-up"
         );
 
-        const primaryAccount = paymentData.accounts[0];
+        console.log("paymentData", paymentData);
+
+
 
         // 2. Create Pending Transaction Record
         await prisma.transaction.create({
@@ -55,9 +62,9 @@ const initGatewayFunding = async (req, res) => {
                     provider: "MONNIFY",
                     transactionReference: paymentData.transactionReference,
                     accountDetails: {
-                        accountNumber: primaryAccount.accountNumber,
-                        accountName: primaryAccount.accountName,
-                        bankName: primaryAccount.bankName,
+                        accountNumber: paymentData.accountNumber,
+                        accountName: paymentData.accountName,
+                        bankName: paymentData.bankName,
                         amount: paymentData.amount
                     }
                 }
@@ -66,18 +73,18 @@ const initGatewayFunding = async (req, res) => {
 
         console.log(
             "status", "OK",
-            "accountNumber", primaryAccount.accountNumber,
-            "accountName", primaryAccount.accountName,
-            "bankName:", primaryAccount.bankName,
+            "accountNumber", paymentData.accountNumber,
+            "accountName", paymentData.accountName,
+            "bankName:", paymentData.bankName,
             "amount:", paymentData.amount,
             "reference:", paymentData.paymentReference
         )
 
         res.status(200).json({
             status: "OK",
-            accountNumber: primaryAccount.accountNumber,
-            accountName: primaryAccount.accountName,
-            bankName: primaryAccount.bankName,
+            accountNumber: paymentData.accountNumber,
+            accountName: paymentData.accountName,
+            bankName: paymentData.bankName,
             amount: paymentData.amount,
             reference: paymentData.paymentReference
         });
