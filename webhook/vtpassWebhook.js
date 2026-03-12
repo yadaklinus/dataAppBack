@@ -53,7 +53,15 @@ const processTransactionUpdate = async (data) => {
 
     // 1. Fetch transaction from DB to check status
     const existingTx = await prisma.transaction.findUnique({
-        where: { reference: requestId }
+        where: { reference: requestId },
+        select: {
+            id: true,
+            status: true,
+            userId: true,
+            amount: true,
+            metadata: true,
+            type: true
+        }
     });
 
     if (!existingTx) {

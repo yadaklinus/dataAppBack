@@ -21,6 +21,11 @@ const startFlightStatusJob = () => {
                 where: {
                     status: 'FUTURE_HELD',
                     targetDate: { lte: sixtyDaysFromNow }
+                },
+                select: {
+                    id: true,
+                    targetDate: true,
+                    status: true
                 }
             });
 

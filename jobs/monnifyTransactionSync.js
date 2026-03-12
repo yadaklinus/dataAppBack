@@ -23,8 +23,12 @@ const startMonnifyTransactionSync = () => {
                     type: TransactionType.WALLET_FUNDING,
                     status: TransactionStatus.PENDING,
                     createdAt: { lt: twoMinutesAgo },
-                    // Optional: If you support multiple providers, filter by metadata
-                    // metadata: { path: ['provider'], equals: 'MONNIFY' }
+                },
+                select: {
+                    id: true,
+                    reference: true,
+                    status: true,
+                    userId: true
                 },
                 take: 15
             });
@@ -58,7 +62,8 @@ const startMonnifyTransactionSync = () => {
                         // 4. Atomic Update (Idempotent)
                         await prisma.$transaction(async (tx) => {
                             const currentTx = await tx.transaction.findUnique({
-                                where: { id: txn.id }
+                                where: { id: txn.id },
+                                select: { id: true, status: true }
                             });
 
                             // Critical: Ensure it hasn't been updated by a webhook in the last millisecond

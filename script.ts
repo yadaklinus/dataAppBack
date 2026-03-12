@@ -92,6 +92,14 @@ const authLimiter = rateLimit({
     legacyHeaders: false,
 });
 
+const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Higher limit for refresh
+    message: { status: "ERROR", message: "Too many refresh attempts. Try again in 15 minutes." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 // 5. Body Parsing
 app.use(express.json({ limit: '10kb' })); // Protection against large JSON payloads
 app.use(express.urlencoded({ extended: false, limit: '10kb' }));
@@ -116,7 +124,11 @@ app.get("/", (req: Request, res: Response) => {
 });
 
 // 8. Routes
-app.use("/api/v1/auth", authLimiter, authRouterV1);
+app.use("/api/v1/auth", (req, res, next) => {
+    // Apply higher limit for refresh, strict limit for others
+    if (req.path === '/refresh') return refreshLimiter(req, res, next);
+    return authLimiter(req, res, next);
+}, authRouterV1);
 app.use("/api/v1/user", userRouterV1);
 app.use("/api/v1/vtu", vtuRouterV1);
 app.use("/api/v1/flw", flwRouterV1);

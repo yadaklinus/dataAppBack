@@ -21,31 +21,56 @@ const refresh = async (req, res) => {
         // 1. Find the token in the DB
         const storedToken = await prisma.refreshToken.findUnique({
             where: { token: refreshToken },
-            include: { user: true }
+            include: { user: { select: { id: true, email: true, tier: true } } }
         });
 
-        // 2. Validate Token
-        if (!storedToken || storedToken.revoked || storedToken.expiresAt < new Date()) {
-            return res.status(401).json({ status: "ERROR", message: "Invalid or expired refresh token" });
+        // 2. Validate Token Existence
+        if (!storedToken) {
+            return res.status(401).json({ status: "ERROR", message: "Invalid refresh token" });
+        }
+
+        // 3. Check for Expiration
+        if (storedToken.expiresAt < new Date()) {
+            return res.status(401).json({ status: "ERROR", message: "Refresh token expired" });
+        }
+
+        // 4. Token Rotation Race Condition Handling (Grace Period)
+        if (storedToken.revoked) {
+            const gracePeriodMs = 60 * 1000; // Increased to 60 seconds
+            const now = new Date();
+            const updatedAt = new Date(storedToken.updatedAt);
+            const diffMs = now - updatedAt;
+            const revokedRecently = diffMs < gracePeriodMs;
+
+            if (!revokedRecently) {
+                console.warn(`[Refresh] Revoked token reuse attempt. User: ${storedToken.userId}, TokenSuffix: ...${refreshToken.slice(-8)}, RevokedAt: ${updatedAt.toISOString()}, Now: ${now.toISOString()}, Diff: ${diffMs}ms`);
+                return res.status(401).json({ status: "ERROR", message: "Session invalid or expired" });
+            }
+            // If revoked recently, we allow the refresh to proceed to handle concurrent requests
+            console.log(`[Refresh] Grace period refresh for user ${storedToken.userId}. Diff: ${diffMs}ms`);
         }
 
         const user = storedToken.user;
+        if (!user) {
+            return res.status(401).json({ status: "ERROR", message: "User session no longer valid" });
+        }
 
-        // 3. Optional: Token Rotation logic
-        // We revoke the old token and issue a new one
-        await prisma.refreshToken.update({
-            where: { id: storedToken.id },
-            data: { revoked: true }
-        });
+        // 5. Revoke the old token (if not already revoked during grace period)
+        if (!storedToken.revoked) {
+            await prisma.refreshToken.update({
+                where: { id: storedToken.id },
+                data: { revoked: true }
+            });
+        }
 
-        // Generate new Access Token
+        // 6. Generate new Access Token
         const newAccessToken = jwt.sign(
             { userId: user.id, email: user.email, tier: user.tier },
             JWT_SECRET,
             { expiresIn: ACCESS_TOKEN_EXPIRY }
         );
 
-        // Generate new Refresh Token
+        // 7. Generate new Refresh Token
         const newRefreshTokenString = crypto.randomBytes(40).toString('hex');
         const newExpiresAt = new Date();
         newExpiresAt.setDate(newExpiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
@@ -65,10 +90,15 @@ const refresh = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Refresh Error:", error.message);
+        console.error("Refresh Error:", error.stack || error.message);
 
         // Handle database timeouts or pool exhaustion gracefully
-        if (error.message.includes('Prisma') || error.message.includes('Pool') || error.message.includes('timeout')) {
+        const isDbError = error.message.includes('Prisma') ||
+            error.message.includes('Pool') ||
+            error.message.includes('timeout') ||
+            error.code?.startsWith('P');
+
+        if (isDbError) {
             return res.status(503).json({ status: "ERROR", message: "System busy. Please retry in a moment." });
         }
 

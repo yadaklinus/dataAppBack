@@ -8,8 +8,9 @@ const { normalizeProviderDate } = require('@/lib/dateUtils');
  */
 
 const getBaseUrl = () => {
-    //const ENV = process.env.NODE_ENV === 'production' ? 'live' : 'sandbox';
-    return 'https://vtpass.com/api';
+    const ENV = process.env.NODE_ENV === 'production' ? 'live' : 'sandbox';
+
+    return 'https://sandbox.vtpass.com/api';
 };
 
 /**

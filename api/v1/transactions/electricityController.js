@@ -31,9 +31,27 @@ const formatZodError = (error) => {
     return error.issues.map(err => err.message).join(", ");
 };
 
+const { getCache, setCache } = require('@/lib/redis');
+
 const getDiscos = async (req, res) => {
     try {
+        const cacheKey = 'electricity_discos';
+        const cachedDiscos = await getCache(cacheKey);
+
+        if (cachedDiscos) {
+            console.log('[Cache] Hit for electricity_discos');
+            return res.status(200).json({
+                status: "OK",
+                data: cachedDiscos
+            });
+        }
+
+        console.log('[Cache] Miss for electricity_discos');
         const vtpassDiscos = await vtpassProvider.fetchElectricityDiscos();
+
+        // Cache for 24 hours
+        await setCache(cacheKey, vtpassDiscos, 86400);
+
         return res.status(200).json({
             status: "OK",
             data: vtpassDiscos
@@ -113,7 +131,8 @@ const purchaseElectricity = async (req, res) => {
                     userId,
                     type: TransactionType.ELECTRICITY,
                     metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                }
+                },
+                select: { id: true }
             });
             if (existingTx) {
                 return res.status(409).json({
@@ -133,7 +152,8 @@ const purchaseElectricity = async (req, res) => {
                     metadata: {
                         path: ['meterNo'], equals: meterNo,
                     }
-                }
+                },
+                select: { id: true, metadata: true }
             });
 
             if (existingTx && existingTx.metadata && existingTx.metadata.discoCode === discoCode) {
@@ -147,7 +167,10 @@ const purchaseElectricity = async (req, res) => {
         // 2. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
-            user = await tx.user.findUnique({ where: { id: userId } });
+            user = await tx.user.findUnique({
+                where: { id: userId },
+                select: { id: true, transactionPin: true, phoneNumber: true }
+            });
             if (!user) throw new Error("User not found");
             if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 

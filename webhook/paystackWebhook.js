@@ -70,7 +70,13 @@ const handleChargeSuccess = async (data) => {
     await prisma.$transaction(async (tx) => {
         // Check for existing pending transaction
         const existingTx = await tx.transaction.findUnique({
-            where: { reference }
+            where: { reference },
+            select: {
+                id: true,
+                status: true,
+                userId: true,
+                metadata: true
+            }
         });
 
         if (!existingTx || existingTx.status !== TransactionStatus.PENDING) {
@@ -123,7 +129,12 @@ const handleDvaAssignment = async (data) => {
     try {
         const user = await prisma.user.findUnique({
             where: { email: customerEmail },
-            include: { kycData: true }
+            select: {
+                id: true,
+                kycData: {
+                    select: { id: true }
+                }
+            }
         });
 
         if (!user || !user.kycData) {

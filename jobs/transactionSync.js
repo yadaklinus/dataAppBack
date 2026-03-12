@@ -42,6 +42,15 @@ const startTransactionSync = () => {
                     status: TransactionStatus.PENDING,
                     createdAt: { lt: twoMinutesAgo }
                 },
+                select: {
+                    id: true,
+                    reference: true,
+                    providerReference: true,
+                    status: true,
+                    userId: true,
+                    amount: true,
+                    type: true
+                },
                 take: 20
             });
 
@@ -80,7 +89,10 @@ const reconcileFunding = async (txn) => {
 
     if (verification?.status === "successful") {
         await prisma.$transaction(async (tx) => {
-            const currentTx = await tx.transaction.findUnique({ where: { id: txn.id } });
+            const currentTx = await tx.transaction.findUnique({
+                where: { id: txn.id },
+                select: { id: true, status: true }
+            });
             if (!currentTx || currentTx.status !== TransactionStatus.PENDING) return;
 
             const totalPaid = Number(verification.amount);

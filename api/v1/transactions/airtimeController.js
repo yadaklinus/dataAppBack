@@ -65,7 +65,8 @@ const purchaseAirtime = async (req, res) => {
                     userId,
                     type: TransactionType.AIRTIME,
                     metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                }
+                },
+                select: { id: true }
             });
             if (existingTx) {
                 return res.status(409).json({
@@ -85,7 +86,8 @@ const purchaseAirtime = async (req, res) => {
                     metadata: {
                         path: ['recipient'], equals: cleanPhone,
                     }
-                }
+                },
+                select: { id: true, metadata: true }
             });
 
             if (existingTx && existingTx.metadata && existingTx.metadata.network === network) {
@@ -99,7 +101,10 @@ const purchaseAirtime = async (req, res) => {
         // 1. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
-            const user = await tx.user.findUnique({ where: { id: userId } });
+            const user = await tx.user.findUnique({
+                where: { id: userId },
+                select: { id: true, transactionPin: true }
+            });
             if (!user) throw new Error("User not found");
             if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 
@@ -168,14 +173,14 @@ const purchaseAirtime = async (req, res) => {
             if (providerResponse.isPending) {
                 return res.status(202).json({
                     status: "PENDING",
-                    message: "Airtime purchase is processing. Please check status history in a moment.",
+                    message: "Airtime purchase is processing. You will be notified once it is complete.",
                     transactionId: result.requestId
                 });
             }
 
             return res.status(200).json({
                 status: "OK",
-                message: "Airtime purchase successful",
+                message: "Airtime purchased successfully",
                 transactionId: result.requestId
             });
 
@@ -216,7 +221,15 @@ const getAirtimeStatus = async (req, res) => {
     try {
         let txn = await prisma.transaction.findUnique({
             where: { reference },
-            include: { user: { select: { id: true, fullName: true } } }
+            select: {
+                id: true,
+                userId: true,
+                amount: true,
+                status: true,
+                providerReference: true,
+                metadata: true,
+                user: { select: { id: true, fullName: true } }
+            }
         });
 
         if (!txn || txn.userId !== req.user.id) return res.status(404).json({ status: "ERROR", message: "Transaction not found" });
@@ -238,7 +251,14 @@ const getAirtimeStatus = async (req, res) => {
                     if (refundSuccess) {
                         txn = await prisma.transaction.findUnique({
                             where: { id: txn.id },
-                            include: { user: { select: { fullName: true } } }
+                            select: {
+                                id: true,
+                                amount: true,
+                                status: true,
+                                providerReference: true,
+                                metadata: true,
+                                user: { select: { fullName: true } }
+                            }
                         });
                     }
                 }

@@ -53,7 +53,8 @@ const printPins = async (req, res) => {
                     userId,
                     type: TransactionType.RECHARGE_PIN,
                     metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                }
+                },
+                select: { id: true }
             });
             if (existingTx) {
                 return res.status(409).json({
@@ -73,7 +74,8 @@ const printPins = async (req, res) => {
                     metadata: {
                         path: ['network'], equals: network,
                     }
-                }
+                },
+                select: { id: true, metadata: true }
             });
 
             if (existingTx && existingTx.metadata && existingTx.metadata.faceValue === faceValue && existingTx.metadata.quantity === qty) {
@@ -85,7 +87,10 @@ const printPins = async (req, res) => {
         }
 
         const result = await prisma.$transaction(async (tx) => {
-            const wallet = await tx.wallet.findUnique({ where: { userId } });
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+                select: { id: true, userId: true, balance: true }
+            });
 
             if (!wallet || Number(wallet.balance) < totalCost) {
                 throw new Error("Insufficient wallet balance");
@@ -213,8 +218,25 @@ const getPrintingOrders = async (req, res) => {
                     userId,
                     type: 'RECHARGE_PIN'
                 },
-                include: {
-                    printedPins: true // This adds the actual pins to each transaction object
+                select: {
+                    id: true,
+                    amount: true,
+                    reference: true,
+                    status: true,
+                    createdAt: true,
+                    metadata: true,
+                    printedPins: {
+                        select: {
+                            id: true,
+                            network: true,
+                            denomination: true,
+                            pinCode: true,
+                            serialNumber: true,
+                            batchNumber: true,
+                            isSold: true,
+                            soldAt: true
+                        }
+                    }
                 },
                 orderBy: { createdAt: 'desc' },
                 skip,

@@ -32,11 +32,25 @@ const formatZodError = (error) => {
     return error.issues.map(err => err.message).join(", ");
 };
 
+const { getCache, setCache } = require('@/lib/redis');
+
 const getPackages = async (req, res) => {
     try {
+        const cacheKey = 'cable_packages_all';
+        const cachedPackages = await getCache(cacheKey);
+
+        if (cachedPackages) {
+            console.log('[Cache] Hit for cable_packages_all');
+            return res.status(200).json(cachedPackages);
+        }
+
+        console.log('[Cache] Miss for cable_packages_all');
         const packages = await vtpassProvider.fetchAllCablePackagesMapped();
 
-        console.log("Cable Packages:", packages);
+        // Cache for 24 hours
+        await setCache(cacheKey, packages, 86400);
+
+        console.log("Cable Packages fetched from provider");
         return res.status(200).json(packages);
 
     } catch (error) {
@@ -117,7 +131,8 @@ const purchaseSubscription = async (req, res) => {
                     userId,
                     type: TransactionType.CABLE_TV,
                     metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                }
+                },
+                select: { id: true }
             });
             if (existingTx) {
                 return res.status(409).json({
@@ -137,7 +152,8 @@ const purchaseSubscription = async (req, res) => {
                     metadata: {
                         path: ['smartCardNo'], equals: smartCardNo,
                     }
-                }
+                },
+                select: { id: true, metadata: true }
             });
 
             if (existingTx && existingTx.metadata && existingTx.metadata.cableTV === cableTV && existingTx.metadata.packageCode === packageCode) {
@@ -151,7 +167,10 @@ const purchaseSubscription = async (req, res) => {
         // 3. Atomic Wallet Deduction
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
-            user = await tx.user.findUnique({ where: { id: userId } });
+            user = await tx.user.findUnique({
+                where: { id: userId },
+                select: { id: true, transactionPin: true, phoneNumber: true }
+            });
             if (!user) throw new Error("User not found");
             if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 

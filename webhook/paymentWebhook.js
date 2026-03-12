@@ -76,7 +76,13 @@ const handleFlutterwaveWebhook = async (req, res) => {
         if (reference && reference.startsWith('FLT-')) {
             const flightTx = await prisma.flightTransaction.findUnique({
                 where: { reference },
-                include: { wallet: true }
+                select: {
+                    reference: true,
+                    flightRequestId: true,
+                    wallet: {
+                        select: { userId: true }
+                    }
+                }
             });
 
             if (!flightTx) {
@@ -120,7 +126,12 @@ const handleFlutterwaveWebhook = async (req, res) => {
         // CASE A: Standard Gateway (Card/USSD)
         if (reference && reference.startsWith('FUND-')) {
             const existingTx = await prisma.transaction.findUnique({
-                where: { reference }
+                where: { reference },
+                select: {
+                    userId: true,
+                    id: true,
+                    amount: true
+                }
             });
 
             if (!existingTx) {
@@ -140,7 +151,8 @@ const handleFlutterwaveWebhook = async (req, res) => {
             //internalReference = `VA-IN-${flwId}`;
 
             const kycRecord = await prisma.kycData.findFirst({
-                where: { userId }
+                where: { userId },
+                select: { id: true }
             });
 
             if (!kycRecord) { console.error('[Webhook] Unknown VA reference'); return; }
@@ -149,7 +161,8 @@ const handleFlutterwaveWebhook = async (req, res) => {
         // CASE C: Fallback for orderRef
         else if (orderRef) {
             const kycRecord = await prisma.kycData.findUnique({
-                where: { accountReference: orderRef }
+                where: { accountReference: orderRef },
+                select: { userId: true }
             });
             userId = kycRecord?.userId;
             internalReference = `VA-IN-${flwId}`;

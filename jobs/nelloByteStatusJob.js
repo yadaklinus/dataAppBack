@@ -37,8 +37,18 @@ const startNelloByteStatusJob = () => {
                         gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) // limit to past 3 days
                     }
                 },
+                orderBy: { createdAt: 'desc' },
+                select: {
+                    id: true,
+                    reference: true,
+                    providerReference: true,
+                    status: true,
+                    type: true,
+                    metadata: true,
+                    amount: true,
+                    userId: true
+                },
                 take: 50, // max 50 per minute to prevent rate limiting
-                orderBy: { createdAt: 'desc' }
             });
 
             if (pendingTransactions.length === 0) return;

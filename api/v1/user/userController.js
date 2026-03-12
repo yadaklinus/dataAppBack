@@ -64,12 +64,21 @@ const getTransactions = async (req, res) => {
         const [transactions, total] = await prisma.$transaction([
             prisma.transaction.findMany({
                 where,
+                select: {
+                    id: true,
+                    amount: true,
+                    fee: true,
+                    type: true,
+                    status: true,
+                    reference: true,
+                    providerReference: true,
+                    metadata: true,
+                    createdAt: true,
+                    printedPins: true
+                },
                 orderBy: { createdAt: 'desc' },
                 skip: parseInt(skip),
-                take: parseInt(limit),
-                include: {
-                    printedPins: true
-                }
+                take: parseInt(limit)
             }),
             prisma.transaction.count({ where })
         ], {
@@ -115,6 +124,15 @@ const getDashboard = async (req, res) => {
             // 2. Last 5 Transactions
             prisma.transaction.findMany({
                 where: { userId },
+                select: {
+                    id: true,
+                    amount: true,
+                    type: true,
+                    status: true,
+                    reference: true,
+                    createdAt: true,
+                    metadata: true
+                },
                 orderBy: { createdAt: 'desc' },
                 take: 5
             }),
@@ -173,14 +191,22 @@ const getUserPins = async (req, res) => {
         const [pins, total] = await prisma.$transaction([
             prisma.rechargePin.findMany({
                 where,
-                orderBy: { createdAt: 'desc' },
-                skip: parseInt(skip),
-                take: parseInt(limit),
-                include: {
+                select: {
+                    id: true,
+                    network: true,
+                    denomination: true,
+                    pinCode: true,
+                    serialNumber: true,
+                    isSold: true,
+                    createdAt: true,
+                    soldAt: true,
                     transaction: {
                         select: { reference: true, createdAt: true }
                     }
-                }
+                },
+                orderBy: { createdAt: 'desc' },
+                skip: parseInt(skip),
+                take: parseInt(limit)
             }),
             prisma.rechargePin.count({ where })
         ], {

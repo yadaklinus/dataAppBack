@@ -40,6 +40,8 @@ const formatZodError = (error) => {
     return error.issues.map(err => err.message).join(", ");
 };
 
+const { getCache, setCache } = require('@/lib/redis');
+
 const getPackages = async (req, res) => {
     const validation = getPackagesSchema.safeParse(req.query);
 
@@ -53,7 +55,20 @@ const getPackages = async (req, res) => {
     const { provider } = validation.data;
 
     try {
+        const cacheKey = `edu_packages_${provider.toLowerCase()}`;
+        const cachedData = await getCache(cacheKey);
+
+        if (cachedData) {
+            console.log(`[Cache] Hit for ${cacheKey}`);
+            return res.status(200).json(cachedData);
+        }
+
+        console.log(`[Cache] Miss for ${cacheKey}`);
         const result = await eduProvider.fetchEducationPackages(provider);
+
+        // Cache for 24 hours
+        await setCache(cacheKey, result, 86400);
+
         return res.status(200).json(result);
     } catch (error) {
         return res.status(400).json({ status: "ERROR", message: error.message });
@@ -94,6 +109,28 @@ const purchasePin = async (req, res) => {
     const { provider, examType, phoneNo, profileId, transactionPin } = validation.data;
     console.log(provider, examType, phoneNo, profileId);
     const userId = req.user.id;
+
+    // --- IDEMPOTENCY CHECK ---
+    const sixtySecondsAgo = new Date(Date.now() - 60000);
+    const existingTx = await prisma.transaction.findFirst({
+        where: {
+            userId,
+            type: TransactionType.EDUCATION,
+            amount: { gt: 0 }, // We'll verify cost in a moment, but check for any recent EDU tx
+            metadata: {
+                path: ['provider'], equals: provider,
+            },
+            createdAt: { gte: sixtySecondsAgo }
+        },
+        select: { id: true, metadata: true }
+    });
+
+    if (existingTx && existingTx.metadata && existingTx.metadata.examType === examType && existingTx.metadata.recipient === phoneNo) {
+        return res.status(409).json({
+            status: "ERROR",
+            message: "Identical transaction detected within the last minute. Please wait before retrying."
+        });
+    }
 
     try {
         // 1. Fetch Authoritative Pricing from Provider (VTPass wraps it in EXAM_TYPE array for legacy compatibility)
@@ -137,7 +174,10 @@ const purchasePin = async (req, res) => {
         // 3. Database Atomic Operation
         const result = await prisma.$transaction(async (tx) => {
             // Verify Transaction PIN
-            const user = await tx.user.findUnique({ where: { id: userId } });
+            const user = await tx.user.findUnique({
+                where: { id: userId },
+                select: { id: true, transactionPin: true }
+            });
             if (!user) throw new Error("User not found");
             if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 
