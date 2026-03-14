@@ -3,6 +3,7 @@ const router = express.Router();
 const { authMiddleware, requireAdmin, requireTicketStaff } = require('@/middleware/authMiddleware');
 const userController = require('@/api/v1/flights/userFlightController');
 const staffController = require('@/api/v1/flights/staffFlightController');
+const templateController = require('@/api/v1/flights/flightTemplateController');
 
 // All flight routes require authentication
 router.use(authMiddleware);
@@ -12,13 +13,12 @@ router.get('/user/airports', userController.getAirports);
 router.post('/user/request', userController.requestFlight);
 router.get('/user/requests', userController.getUserRequests);
 router.get('/user/requests/:id', userController.getUserRequestById);
-router.post('/user/:id/select', userController.selectOptionAndPassengers);
+router.post('/user/:id/book', userController.bookFlight);
 router.post('/user/:id/pay', userController.payForFlight);
 router.post('/user/:id/cancel', userController.cancelFlightRequest);
+router.get('/user/transactions', userController.getUserFlightTransactions);
 
 // --- STAFF ROUTES ---
-// We assume requireTicketStaff exists or we can use authorizeAdmin for now
-// If requireTicketStaff doesn't exist, we fallback to authorizeAdmin. 
 const staffAuth = requireTicketStaff;
 
 router.get('/staff/requests', staffAuth, staffController.getAllRequests);
@@ -29,5 +29,12 @@ router.post('/staff/:id/fulfill', staffAuth, staffController.fulfillTicket);
 router.get('/staff/:id/history', staffAuth, staffController.getRequestHistory);
 router.post('/staff/:id/cancel', staffAuth, staffController.cancelFlightRequest);
 router.post('/staff/:id/refund', staffAuth, staffController.refundFlightRequest);
+router.get('/staff/transactions', staffAuth, staffController.getAllFlightTransactions);
+
+// --- TEMPLATE ROUTES ---
+router.post('/staff/templates', staffAuth, templateController.saveTemplate);
+router.get('/staff/templates', staffAuth, templateController.getTemplates);
+router.delete('/staff/templates/:id', staffAuth, templateController.deleteTemplate);
+router.post('/staff/request/:requestId/quote-from-template', staffAuth, templateController.quoteFromTemplate);
 
 module.exports = router;

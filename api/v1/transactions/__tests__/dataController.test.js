@@ -8,6 +8,15 @@ const bcrypt = require('bcryptjs');
 jest.mock('@/lib/prisma');
 jest.mock('@/services/vtpassProvider');
 jest.mock('bcryptjs');
+jest.mock('@/lib/redis', () => ({
+    getCache: jest.fn(),
+    setCache: jest.fn(),
+    delCache: jest.fn(),
+    redisClient: {
+        quit: jest.fn(),
+        isOpen: false
+    }
+}));
 
 describe('Data Controller - purchaseData', () => {
     let req, res;

@@ -2,7 +2,6 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const monnifyProvider = require('@/services/monnifyProvider');
 const paymentProvider = require('@/services/paymentProvider');
-//const { generateRef } = require('@/utils/generateRef'); // Assuming a ref generator exists, or we will use crypto
 
 // Helper for generating refs
 const crypto = require('crypto');
@@ -70,7 +69,7 @@ const flightRequestSchema = z.object({
     path: ["returnDate"]
 });
 
-const selectOptionSchema = z.object({
+const bookFlightSchema = z.object({
     selectedOptionId: z.string().min(1),
     passengers: z.array(z.object({
         title: z.string().min(1),
@@ -95,20 +94,8 @@ const requestFlight = async (req, res) => {
         const { origin, destination, targetDate, returnDate, tripType, flightClass, adults, children, infants } = validation.data;
         const userId = req.user.id;
 
-        // Calculate if flight is > 60 days away
         const target = new Date(targetDate);
-        const daysDifference = (target.getTime() - Date.now()) / (1000 * 3600 * 24);
-
-        let initialStatus = 'FUTURE_HELD';
-        if (daysDifference <= 60) {
-            // Note: Per spec, if < 60 days, jumps to SELECTION_MADE or needs options.
-            // Let's set to PENDING or OPTIONS_PROVIDED equivalent so staff knows it needs options ASAP
-            // Actually spec says "If a flight is < 60 days away at initial request, it jumps straight to this state (SELECTION_MADE)"
-            // But user hasn't selected options yet, so it should technically be PENDING_OPTIONS for staff.
-            // We'll use FUTURE_HELD for > 60 days. If < 60, we'll keep it FUTURE_HELD but cron will pick it up or we can flag it.
-            // Let's stick to FUTURE_HELD as the default entry point and let staff/cron transition it.
-            initialStatus = 'FUTURE_HELD';
-        }
+        const initialStatus = 'FUTURE_HELD';
 
         const newRequest = await prisma.flightBookingRequest.create({
             data: {
@@ -126,7 +113,6 @@ const requestFlight = async (req, res) => {
             }
         });
 
-        // Audit Trail
         await prisma.flightRequestActivity.create({
             data: {
                 requestId: newRequest.id,
@@ -167,7 +153,6 @@ const getUserRequests = async (req, res) => {
             status: "OK",
             data: mappedRequests
         });
-        console.log(mappedRequests);
     } catch (error) {
         console.error("Get User Flights Error:", error);
         res.status(500).json({ status: "ERROR", message: "Failed to fetch flight requests" });
@@ -175,12 +160,12 @@ const getUserRequests = async (req, res) => {
 };
 
 /**
- * 3. User Selects Option and Submits Passengers (Phase 2)
- * @route POST /api/v1/flights/user/:id/select
+ * 3. User "Books" a Flight Option (Provides Passengers & Starts 30m Timer)
+ * @route POST /api/v1/flights/user/:id/book
  */
-const selectOptionAndPassengers = async (req, res) => {
+const bookFlight = async (req, res) => {
     try {
-        const validation = selectOptionSchema.safeParse(req.body);
+        const validation = bookFlightSchema.safeParse(req.body);
         if (!validation.success) {
             return res.status(400).json({ status: "ERROR", message: validation.error.issues[0].message });
         }
@@ -189,7 +174,6 @@ const selectOptionAndPassengers = async (req, res) => {
         const requestId = req.params.id;
         const userId = req.user.id;
 
-        // Concurrency/State Lock: Must be in OPTIONS_PROVIDED state (or FUTURE_HELD if fast-tracked)
         const flightRequest = await prisma.flightBookingRequest.findFirst({
             where: { id: requestId, userId }
         });
@@ -198,7 +182,6 @@ const selectOptionAndPassengers = async (req, res) => {
             return res.status(404).json({ status: "ERROR", message: "Flight request not found" });
         }
 
-        // Validate the option exists if options have been provided
         let validOption = false;
         let selectedFlightDate = null;
         const hasOptions = flightRequest.flightOptions && Array.isArray(flightRequest.flightOptions) && flightRequest.flightOptions.length > 0;
@@ -211,8 +194,6 @@ const selectOptionAndPassengers = async (req, res) => {
             }
         }
 
-        // If options were provided by staff, force valid selection. 
-        // If not (e.g. initial request fast-track), we allow the selection to proceed (usually just passenger info).
         if (hasOptions && !validOption) {
             return res.status(400).json({ status: "ERROR", message: "Invalid option selected from available choices." });
         }
@@ -221,50 +202,14 @@ const selectOptionAndPassengers = async (req, res) => {
         if (passengers.length !== totalExpected) {
             return res.status(400).json({
                 status: "ERROR",
-                message: `Please provide details for exactly ${totalExpected} passengers (${flightRequest.adults} Adults, ${flightRequest.children} Children, ${flightRequest.infants} Infants).`
+                message: `Please provide details for exactly ${totalExpected} passengers.`
             });
         }
 
-        const departureDate = selectedFlightDate ? new Date(selectedFlightDate) : new Date(flightRequest.targetDate);
-        let currentAdults = 0;
-        let currentChildren = 0;
-        let currentInfants = 0;
-
-        for (const passenger of passengers) {
-            const dob = new Date(passenger.dateOfBirth);
-            if (isNaN(dob.getTime())) {
-                return res.status(400).json({ status: "ERROR", message: "Invalid date of birth provided." });
-            }
-
-            let age = departureDate.getFullYear() - dob.getFullYear();
-            const m = departureDate.getMonth() - dob.getMonth();
-            if (m < 0 || (m === 0 && departureDate.getDate() < dob.getDate())) {
-                age--;
-            }
-
-            if (age < 2) {
-                currentInfants++;
-            } else if (age < 12) {
-                currentChildren++;
-            } else {
-                currentAdults++;
-            }
-        }
-
-        if (currentAdults !== flightRequest.adults || currentChildren !== flightRequest.children || currentInfants !== flightRequest.infants) {
-            return res.status(400).json({
-                status: "ERROR",
-                message: `Age mismatch. Booking requires ${flightRequest.adults} Adults (12+), ${flightRequest.children} Children (2-11), ${flightRequest.infants} Infants (Under 2). Provided dates of birth resulted in ${currentAdults} Adults, ${currentChildren} Children, and ${currentInfants} Infants.`
-            });
-        }
-
-        // Atomic Transaction: Update request and insert passengers
         const updatedRequest = await prisma.$transaction(async (tx) => {
-            // Unlink old passengers if any
             await tx.passenger.deleteMany({ where: { flightRequestId: requestId } });
 
-            // Create new passengers
-            const createdPassengers = await tx.passenger.createMany({
+            await tx.passenger.createMany({
                 data: passengers.map(p => ({
                     flightRequestId: requestId,
                     title: p.title,
@@ -275,31 +220,38 @@ const selectOptionAndPassengers = async (req, res) => {
                 }))
             });
 
-            // Prepare the payload for the request update
+            const paymentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+            const options = flightRequest.flightOptions || [];
+            const selectedOption = options.find(opt => opt.id === selectedOptionId);
+            if (!selectedOption) throw new Error("Selected option details not found");
+
             const updatePayload = {
                 status: 'SELECTION_MADE',
-                selectedOptionId
+                selectedOptionId,
+                paymentExpiresAt,
+                airlineName: selectedOption.airline,
+                sellingPrice: selectedOption.estPrice,
+                departureTime: selectedOption.departureTime || selectedOption.time,
+                arrivalTime: selectedOption.arrivalTime,
+                legs: selectedOption.legs
             };
 
-            // If a specific date was attached to this option, update the targetDate to match it
             if (selectedFlightDate) {
                 updatePayload.targetDate = new Date(selectedFlightDate);
             }
 
-            // Update state
             const reqUpdate = await tx.flightBookingRequest.update({
                 where: { id: requestId },
                 data: updatePayload
             });
 
-            // Audit
             await tx.flightRequestActivity.create({
                 data: {
                     requestId,
                     userId,
                     previousState: flightRequest.status,
                     newState: 'SELECTION_MADE',
-                    actionDetails: `User selected option ${selectedOptionId} and submitted ${passengers.length} passengers`
+                    actionDetails: `User BOOKED option ${selectedOptionId}. 30-minute timer started.`
                 }
             });
 
@@ -308,25 +260,24 @@ const selectOptionAndPassengers = async (req, res) => {
 
         res.status(200).json({
             status: "OK",
-            message: "Flight option and passengers submitted successfully",
+            message: "Flight booked successfully. Please complete payment within 30 minutes.",
             data: updatedRequest
         });
 
     } catch (error) {
         console.error("Select Option Error:", error);
-        res.status(500).json({ status: "ERROR", message: "Failed to submit selection" });
+        res.status(500).json({ status: "ERROR", message: error.message || "Failed to submit selection" });
     }
 };
 
 /**
- * 4. User Initiates Payment for Quoted Flight (Dynamic Account)
+ * 4. User Pays for Flight via Wallet Balance
  * @route POST /api/v1/flights/user/:id/pay
  */
 const payForFlight = async (req, res) => {
     try {
         const requestId = req.params.id;
         const userId = req.user.id;
-        const { provider = 'MONNIFY' } = req.body;
 
         const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user) throw new Error("User not found");
@@ -340,25 +291,26 @@ const payForFlight = async (req, res) => {
                 throw new Error("Flight request not found");
             }
 
-            if (flightRequest.status !== 'QUOTED') {
+            if (flightRequest.status !== 'SELECTION_MADE' && flightRequest.status !== 'QUOTED') {
                 throw new Error(`Cannot pay. Request is in state: ${flightRequest.status}`);
             }
 
-            if (!flightRequest.sellingPrice) {
-                throw new Error("Staff has not set a selling price yet");
-            }
-
-            if (flightRequest.ticketingTimeLimit && new Date() > new Date(flightRequest.ticketingTimeLimit)) {
+            // Check 30-minute window expiry
+            if (flightRequest.paymentExpiresAt && new Date() > new Date(flightRequest.paymentExpiresAt)) {
                 await tx.flightBookingRequest.update({
                     where: { id: requestId },
                     data: { status: 'EXPIRED' }
                 });
 
                 await tx.flightRequestActivity.create({
-                    data: { requestId, previousState: 'QUOTED', newState: 'EXPIRED', actionDetails: 'TTL Expired during payment attempt' }
+                    data: { requestId, previousState: flightRequest.status, newState: 'EXPIRED', actionDetails: '30-minute payment window expired' }
                 });
 
-                throw new Error("Ticketing Time Limit has expired. Please request a new quote.");
+                throw new Error("The 30-minute payment window has expired. Please book the flight again.");
+            }
+
+            if (!flightRequest.sellingPrice) {
+                throw new Error("No price set for this flight");
             }
 
             const paymentAmount = Number(flightRequest.sellingPrice);
@@ -371,58 +323,52 @@ const payForFlight = async (req, res) => {
                 throw new Error("Wallet not found to link transaction");
             }
 
-            // Check if there's already a transaction for this flight
-            let flightTx = await tx.flightTransaction.findUnique({
-                where: { flightRequestId: requestId }
+            if (Number(wallet.balance) < paymentAmount) {
+                throw new Error(`Insufficient balance. Current: ₦${wallet.balance}, Required: ₦${paymentAmount}`);
+            }
+
+            // Deduct and log
+            await tx.wallet.update({
+                where: { id: wallet.id },
+                data: { balance: { decrement: paymentAmount } }
             });
 
             const txRef = generateFlightRef();
+            await tx.flightTransaction.create({
+                data: {
+                    walletId: wallet.id,
+                    type: 'PAYMENT',
+                    amount: paymentAmount,
+                    reference: txRef,
+                    flightRequestId: requestId
+                }
+            });
 
-            if (!flightTx) {
-                flightTx = await tx.flightTransaction.create({
-                    data: {
-                        walletId: wallet.id,
-                        type: 'PAYMENT',
-                        amount: paymentAmount,
-                        reference: txRef,
-                        flightRequestId: requestId
-                    }
-                });
-            } else {
-                flightTx = await tx.flightTransaction.update({
-                    where: { id: flightTx.id },
-                    data: { reference: txRef }
-                });
-            }
+            const updatedRequest = await tx.flightBookingRequest.update({
+                where: { id: requestId },
+                data: { status: 'PAID_PROCESSING' }
+            });
 
-            return { paymentAmount, txRef: flightTx.reference };
+            await tx.flightRequestActivity.create({
+                data: {
+                    requestId,
+                    previousState: flightRequest.status,
+                    newState: 'PAID_PROCESSING',
+                    actionDetails: `Wallet payment of ₦${paymentAmount} successful. Ref: ${txRef}`
+                }
+            });
+
+            return updatedRequest;
         });
-
-        const paymentAmount = result.paymentAmount;
-        const txRef = result.txRef;
-
-        const customerName = user.fullName || "Customer";
-        const customerEmail = user.email;
-
-        let dynamicAccount;
-        if (provider.toUpperCase() === 'FLUTTERWAVE') {
-            dynamicAccount = await paymentProvider.createDynamicAccount(paymentAmount, customerName, customerEmail, txRef, "Flight Payment");
-        } else {
-            dynamicAccount = await monnifyProvider.createDynamicAccount(paymentAmount, customerName, customerEmail, txRef, "Flight Payment");
-        }
 
         res.status(200).json({
             status: "OK",
-            message: "Dynamic account generated. Please transfer funds to complete booking.",
-            data: {
-                paymentInstruction: dynamicAccount,
-                provider: provider.toUpperCase(),
-                transactionReference: txRef
-            }
+            message: "Payment successful. Your flight is now being ticketed.",
+            data: result
         });
 
     } catch (error) {
-        console.error("Flight Payment Error:", error);
+        console.error("Flight Wallet Payment Error:", error);
         res.status(400).json({ status: "ERROR", message: error.message || "Payment failed" });
     }
 };
@@ -456,7 +402,7 @@ const getUserRequestById = async (req, res) => {
 };
 
 /**
- * 5. User Cancels Flight Request
+ * 6. User Cancels Flight Request
  * @route POST /api/v1/flights/user/:id/cancel
  */
 const cancelFlightRequest = async (req, res) => {
@@ -472,7 +418,6 @@ const cancelFlightRequest = async (req, res) => {
             return res.status(404).json({ status: "ERROR", message: "Flight request not found" });
         }
 
-        // Only allow cancel if not already paid/ticketed
         if (['PAID_PROCESSING', 'TICKETED', 'CANCELLED', 'REFUNDED'].includes(flightRequest.status)) {
             return res.status(400).json({ status: "ERROR", message: `Cannot cancel a request in ${flightRequest.status} state.` });
         }
@@ -500,19 +445,53 @@ const cancelFlightRequest = async (req, res) => {
 };
 
 /**
- * 6. Get List of Airports
+ * 7. Get List of Airports
  * @route GET /api/v1/flights/user/airports
  */
 const getAirports = (req, res) => {
     res.status(200).json({ status: "OK", data: NIGERIA_AIRPORTS });
 };
 
+/**
+ * 8. User gets their flight transaction history
+ * @route GET /api/v1/flights/user/transactions
+ */
+const getUserFlightTransactions = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const transactions = await prisma.flightTransaction.findMany({
+            where: {
+                wallet: { userId }
+            },
+            orderBy: { createdAt: 'desc' },
+            include: {
+                flightRequest: {
+                    select: {
+                        origin: true,
+                        destination: true,
+                        airlineName: true,
+                        pnr: true,
+                        status: true
+                    }
+                }
+            }
+        });
+
+        res.status(200).json({ status: "OK", data: transactions });
+    } catch (error) {
+        console.error("Get User Transactions Error:", error);
+        res.status(500).json({ status: "ERROR", message: "Failed to fetch transaction history" });
+    }
+};
+
 module.exports = {
     requestFlight,
     getUserRequests,
     getUserRequestById,
-    selectOptionAndPassengers,
+    bookFlight,
     payForFlight,
     cancelFlightRequest,
-    getAirports
+    getAirports,
+    getUserFlightTransactions
 };

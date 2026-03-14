@@ -11,7 +11,7 @@ if (!process.env.JWT_SECRET) {
 }
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const ACCESS_TOKEN_EXPIRY = '15m'; // Short-lived
+const ACCESS_TOKEN_EXPIRY = '7d'; // Extended to 7 days as requested, removing refresh token flow
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 
 const login = async (req, res) => {

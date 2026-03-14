@@ -2,6 +2,8 @@ const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 
 const crypto = require('crypto');
+const sendEmail = require('@/lib/mailer');
+const { generateFlightTicketEmailTemplate } = require('@/lib/emailTemplates');
 
 /**
  * Validations
@@ -11,9 +13,19 @@ const provideOptionsSchema = z.object({
         id: z.string().optional(),
         airline: z.string().min(1),
         date: z.string().min(1),
-        time: z.string().min(1),
+        departureTime: z.string().optional(),
+        arrivalTime: z.string().optional(),
+        time: z.string().optional(), // for backward compatibility
         estPrice: z.number().positive(),
-        details: z.string().optional()
+        details: z.string().optional(),
+        legs: z.array(z.object({
+            airline: z.string().optional(),
+            flightNumber: z.string().optional(),
+            origin: z.string().optional(),
+            destination: z.string().optional(),
+            departureTime: z.string().optional(),
+            arrivalTime: z.string().optional()
+        })).optional()
     })).min(1)
 });
 
@@ -22,12 +34,23 @@ const quoteFlightSchema = z.object({
     pnr: z.string().min(1),
     ticketingTimeLimit: z.string().min(1), // HTML datetime-local excludes 'Z', so we parse it manually
     netCost: z.number().min(0),
-    sellingPrice: z.number().min(0)
+    sellingPrice: z.number().min(0),
+    departureTime: z.string().optional(),
+    arrivalTime: z.string().optional(),
+    legs: z.array(z.object({
+        airline: z.string().optional(),
+        flightNumber: z.string().optional(),
+        origin: z.string().optional(),
+        destination: z.string().optional(),
+        departureTime: z.string().optional(),
+        arrivalTime: z.string().optional()
+    })).optional()
 });
 
 const fulfillTicketSchema = z.object({
     eTicketUrl: z.string().url().optional(),
-    ticketDetails: z.string().optional()
+    ticketDetails: z.string().optional(),
+    pnr: z.string().optional()
 });
 
 /**
@@ -113,11 +136,14 @@ const quoteFlight = async (req, res) => {
             where: { id: requestId, status: 'SELECTION_MADE' }, // Strict concurrency lock
             data: {
                 status: 'QUOTED',
-                airlineName,
-                pnr,
-                ticketingTimeLimit: new Date(ticketingTimeLimit),
-                netCost,
-                sellingPrice
+                airlineName: validation.data.airlineName,
+                pnr: validation.data.pnr,
+                ticketingTimeLimit: new Date(validation.data.ticketingTimeLimit),
+                netCost: validation.data.netCost,
+                sellingPrice: validation.data.sellingPrice,
+                departureTime: validation.data.departureTime,
+                arrivalTime: validation.data.arrivalTime,
+                legs: validation.data.legs
             }
         });
 
@@ -154,7 +180,8 @@ const fulfillTicket = async (req, res) => {
 
         // Must be in PAID_PROCESSING
         const flightRequest = await prisma.flightBookingRequest.findFirst({
-            where: { id: requestId, status: 'PAID_PROCESSING' }
+            where: { id: requestId, status: 'PAID_PROCESSING' },
+            include: { user: { select: { fullName: true, email: true } } }
         });
 
         if (!flightRequest) {
@@ -168,7 +195,8 @@ const fulfillTicket = async (req, res) => {
             where: { id: requestId, status: 'PAID_PROCESSING' }, // Strict concurrency lock
             data: {
                 status: 'TICKETED',
-                eTicketUrl: validation.data.eTicketUrl || null
+                eTicketUrl: validation.data.eTicketUrl || null,
+                pnr: validation.data.pnr || flightRequest.pnr // Update PNR if provided, else keep existing
             }
         });
 
@@ -186,7 +214,32 @@ const fulfillTicket = async (req, res) => {
             }
         });
 
-        res.status(200).json({ status: "OK", message: "Flight ticketed successfully", data: updatedRequest });
+        // 4. Send Ticket Email to User
+        try {
+            const emailHtml = generateFlightTicketEmailTemplate({
+                userName: flightRequest.user?.fullName || 'Valued Customer',
+                origin: flightRequest.origin,
+                destination: flightRequest.destination,
+                pnr: validation.data.pnr || flightRequest.pnr,
+                airlineName: flightRequest.airlineName,
+                departureTime: flightRequest.departureTime,
+                arrivalTime: flightRequest.arrivalTime,
+                tripType: flightRequest.tripType,
+                eTicketUrl: updatedRequest.eTicketUrl,
+                legs: flightRequest.legs
+            });
+
+            await sendEmail({
+                to: flightRequest.user?.email,
+                subject: `Your E-Ticket is Ready: ${flightRequest.origin} to ${flightRequest.destination}`,
+                html: emailHtml,
+                text: `Hello, your flight booking ref ${validation.data.pnr || flightRequest.pnr} has been ticketed. Download here: ${updatedRequest.eTicketUrl}`
+            });
+        } catch (emailErr) {
+            console.error("Fulfill Ticket Email Error (Non-blocking):", emailErr);
+        }
+
+        res.status(200).json({ status: "OK", message: "Flight ticketed and email sent successfully", data: updatedRequest });
     } catch (error) {
         console.error("Fulfill Ticket Error:", error);
         res.status(500).json({ status: "ERROR", message: "Failed to fulfill ticket" });
@@ -199,8 +252,25 @@ const fulfillTicket = async (req, res) => {
  */
 const getAllRequests = async (req, res) => {
     try {
-        // You might want pagination here for production
+        const { status, days } = req.query;
+        let where = {};
+
+        if (status && status !== 'ALL') {
+            where.status = status;
+        }
+
+        if (days) {
+            const date = new Date();
+            const daysNum = parseInt(days);
+            if (!isNaN(daysNum)) {
+                date.setDate(date.getDate() - daysNum);
+                date.setHours(0, 0, 0, 0); // Start of the day
+                where.createdAt = { gte: date };
+            }
+        }
+
         const requests = await prisma.flightBookingRequest.findMany({
+            where,
             orderBy: { createdAt: 'desc' },
             include: { user: { select: { fullName: true, email: true, phoneNumber: true } }, passengers: true }
         });
@@ -419,6 +489,42 @@ const refundFlightRequest = async (req, res) => {
     }
 };
 
+/**
+ * 9. Get Global Flight Transactions List (Super Admin only)
+ * @route GET /api/v1/flights/staff/transactions
+ */
+const getAllFlightTransactions = async (req, res) => {
+    try {
+        if (req.user.role !== 'SUPER_ADMIN') {
+            return res.status(403).json({ status: "ERROR", message: "Unauthorized access" });
+        }
+
+        const transactions = await prisma.flightTransaction.findMany({
+            orderBy: { createdAt: 'desc' },
+            include: {
+                wallet: {
+                    include: {
+                        user: { select: { fullName: true, email: true } }
+                    }
+                },
+                flightRequest: {
+                    select: {
+                        origin: true,
+                        destination: true,
+                        airlineName: true,
+                        pnr: true
+                    }
+                }
+            }
+        });
+
+        res.status(200).json({ status: "OK", data: transactions });
+    } catch (error) {
+        console.error("Get All Transactions Error:", error);
+        res.status(500).json({ status: "ERROR", message: "Failed to fetch transactions" });
+    }
+};
+
 module.exports = {
     provideOptions,
     quoteFlight,
@@ -427,5 +533,6 @@ module.exports = {
     getDashboardData,
     getRequestHistory,
     cancelFlightRequest,
-    refundFlightRequest
+    refundFlightRequest,
+    getAllFlightTransactions
 };

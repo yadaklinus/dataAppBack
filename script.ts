@@ -170,3 +170,5 @@ app.listen(PORT, () => {
     console.log(`[Server] Mufti Pay running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
 });
+
+// Triggering reload to pick up Prisma Client changes

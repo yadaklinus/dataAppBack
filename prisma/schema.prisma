@@ -252,6 +252,9 @@ model FlightBookingRequest {
   airlineName        String?
   pnr                String?
   ticketingTimeLimit DateTime?
+  departureTime      String?
+  arrivalTime        String?
+  legs               Json?
 
   // Financials
   netCost      Decimal? @db.Decimal(15, 2)
@@ -261,6 +264,7 @@ model FlightBookingRequest {
   eTicketUrl String?
 
   status FlightRequestStatus @default(FUTURE_HELD)
+  paymentExpiresAt DateTime?
 
   // Relations
   passengers   Passenger[]
@@ -323,4 +327,24 @@ model FlightTransaction {
   flightRequest   FlightBookingRequest @relation("BookingToTransaction", fields: [flightRequestId], references: [id])
 
   createdAt DateTime @default(now())
+}
+
+model SavedFlightTemplate {
+  id            String    @id @default(uuid())
+  airlineName   String
+  flightNumber  String?
+  origin        String
+  destination   String
+  flightDate    DateTime?
+  departureTime String? // e.g., "10:00 AM"
+  arrivalTime   String? // e.g., "02:00 PM"
+  flightClass   String
+  basePrice     Decimal   @db.Decimal(15, 2)
+  notes         String?   @db.Text
+  legs          Json?     // Array of { airline, flightNumber, origin, destination, departureTime, arrivalTime }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([origin, destination])
 }
