@@ -121,6 +121,8 @@ model KycData {
   verifiedAt DateTime?
 
   updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
 
 // --- UNIFIED TRANSACTIONS ---
@@ -156,6 +158,7 @@ model Transaction {
   reference         String  @unique
   providerReference String? @unique
 
+  idempotencyKey    String? @unique
   providerStatus String?
 
   metadata Json?
@@ -165,6 +168,9 @@ model Transaction {
   createdAt DateTime @default(now())
 
   @@index([userId, status, type, createdAt])
+  @@index([status, type])
+  @@index([createdAt])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 // --- INVENTORY FOR CARD PRINTING ---
@@ -263,7 +269,7 @@ model FlightBookingRequest {
   // Delivery
   eTicketUrl String?
 
-  status FlightRequestStatus @default(FUTURE_HELD)
+  status           FlightRequestStatus @default(FUTURE_HELD)
   paymentExpiresAt DateTime?
 
   // Relations
@@ -277,6 +283,8 @@ model FlightBookingRequest {
 
   @@index([userId, status])
   @@index([targetDate])
+  @@index([status, createdAt])
+  @@index([createdAt])
 }
 
 model Passenger {
@@ -291,6 +299,8 @@ model Passenger {
   gender      String
 
   createdAt DateTime @default(now())
+
+  @@index([flightRequestId])
 }
 
 model FlightRequestActivity {
@@ -308,6 +318,8 @@ model FlightRequestActivity {
   actionDetails String? @db.Text
 
   createdAt DateTime @default(now())
+
+  @@index([requestId])
 }
 
 enum FlightTransactionType {
@@ -327,6 +339,8 @@ model FlightTransaction {
   flightRequest   FlightBookingRequest @relation("BookingToTransaction", fields: [flightRequestId], references: [id])
 
   createdAt DateTime @default(now())
+
+  @@index([walletId])
 }
 
 model SavedFlightTemplate {
@@ -341,7 +355,7 @@ model SavedFlightTemplate {
   flightClass   String
   basePrice     Decimal   @db.Decimal(15, 2)
   notes         String?   @db.Text
-  legs          Json?     // Array of { airline, flightNumber, origin, destination, departureTime, arrivalTime }
+  legs          Json? // Array of { airline, flightNumber, origin, destination, departureTime, arrivalTime }
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

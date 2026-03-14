@@ -24,10 +24,12 @@ import adminRouterV1 from '@/routes/adminRoutes';
 import paystackRouterV1 from '@/routes/paystackRoutes';
 import vtpassWebhookRouterV1 from '@/routes/vtpassWebhookRoutes';
 import flightRouterV1 from '@/routes/flightRoutes';
+const { requireSuperAdmin } = require('@/middleware/authMiddleware');
 import { startMonnifyTransactionSync } from './jobs/monnifyTransactionSync';
 import { startPaystackTransactionSync } from './jobs/paystackTransactionSync';
 import { startNelloByteStatusJob } from './jobs/nelloByteStatusJob';
 import { startFlightStatusJob } from './jobs/flightCronJob';
+import { startCleanupJob } from './jobs/cleanupJob';
 
 dotenv.config();
 
@@ -42,8 +44,7 @@ const PORT: number = Number(process.env.PORT) || 3009;
 app.set('trust proxy', 1);
 
 // 3. Security & Cross-Origin
-app.use(statusMonitor()); // Real-time dashboard at /status
-app.use(morgan('dev')); // Structured request logging
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'tiny' : 'dev')); // Optimized logging
 
 // ==========================================
 // TEST ROUTES (Placed before Helmet to avoid CSP blocking inline scripts/CDNs)
@@ -76,6 +77,9 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 }));
+
+// Real-time dashboard - Protected and placed after helmet
+app.use('/status', requireSuperAdmin, statusMonitor()); 
 
 // 4. Rate Limiting
 const globalLimiter = rateLimit({
@@ -165,10 +169,19 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 //startMonnifyTransactionSync();
 //startPaystackTransactionSync();
 startFlightStatusJob();
+startCleanupJob();
 
 app.listen(PORT, () => {
     console.log(`[Server] Mufti Pay running on port ${PORT}`);
     console.log(`[System] Background Transaction Sync Active.`);
+});
+
+// Add at the bottom of script.ts, after app.listen(...)
+process.on('SIGTERM', async () => {
+    console.log('[Server] SIGTERM received, shutting down gracefully');
+    const prisma = require('@/lib/prisma');
+    await prisma.$disconnect();
+    process.exit(0);
 });
 
 // Triggering reload to pick up Prisma Client changes

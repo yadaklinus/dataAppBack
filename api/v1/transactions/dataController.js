@@ -78,7 +78,13 @@ const purchaseData = async (req, res) => {
         let sellingPrice = 0;
         let planName = '';
 
-        const allPlans = await vtpassProvider.fetchDataPlans(network);
+        const cacheKey = `data_plans_${network.toLowerCase()}`;
+        let allPlans = await getCache(cacheKey);
+        if (!allPlans) {
+            allPlans = await vtpassProvider.fetchDataPlans(network);
+            await setCache(cacheKey, allPlans, 3600); // 1 hour TTL
+        }
+
         selectedPlan = allPlans.find(p => String(p.variation_code) === String(planId));
         if (!selectedPlan) {
             return res.status(404).json({ status: "ERROR", message: "Invalid data plan selected" });

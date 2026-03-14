@@ -295,20 +295,29 @@ const getDashboardData = async (req, res) => {
 
         console.log("Staff ID:", staffId);
 
-        // 1. Get Staff Info
-        const staff = await prisma.staff.findUnique({
-            where: { id: staffId },
-            select: { fullName: true, role: true }
-        });
+        // Parallelize fetching staff info, stats aggregation, and recent requests
+        const [staff, statusGroups, recentRequests] = await Promise.all([
+            prisma.staff.findUnique({
+                where: { id: staffId },
+                select: { fullName: true, role: true }
+            }),
+            prisma.flightBookingRequest.groupBy({
+                by: ['status'],
+                _count: { _all: true }
+            }),
+            prisma.flightBookingRequest.findMany({
+                take: 15,
+                orderBy: { createdAt: 'desc' },
+                include: {
+                    user: { select: { fullName: true, email: true, phoneNumber: true } },
+                    passengers: true
+                }
+            })
+        ]);
 
         if (!staff) return res.status(404).json({ status: "ERROR", message: "Staff not found" });
 
-        // 2. Get Stats Aggragation
-        const statusGroups = await prisma.flightBookingRequest.groupBy({
-            by: ['status'],
-            _count: { _all: true }
-        });
-
+        // 2. Process Stats
         const statsMap = statusGroups.reduce((acc, curr) => {
             acc[curr.status] = curr._count._all;
             return acc;
@@ -324,13 +333,6 @@ const getDashboardData = async (req, res) => {
             completed: statsMap['TICKETED'] || 0,
             cancelled: statsMap['CANCELLED'] || 0
         };
-
-        // 3. Get Recent Requests
-        const recentRequests = await prisma.flightBookingRequest.findMany({
-            take: 15,
-            orderBy: { createdAt: 'desc' },
-            include: { user: { select: { fullName: true, email: true, phoneNumber: true } }, passengers: true }
-        });
 
         const mappedRequests = recentRequests.map(r => ({ ...r, passengerDetails: r.passengers }));
 
