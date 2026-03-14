@@ -82,7 +82,11 @@ const verifyMeterNumber = async (req, res) => {
 
     try {
         const typeStr = meterType === '01' ? 'prepaid' : 'postpaid';
+        const cacheKey = `verify_meter_${discoCode}_${meterNo}_${typeStr}`;
         const result = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
+
+        // Cache for 10 minutes to support the purchase follow-up
+        await setCache(cacheKey, result, 600);
 
         return res.status(200).json({ status: "OK", data: result });
     } catch (error) {
@@ -110,9 +114,17 @@ const purchaseElectricity = async (req, res) => {
     let user;
 
     try {
-        // 1. Double-check meter (Safety)
+        // 1. Optimized Verification (Cache-first)
         const typeStr = meterType === '01' ? 'prepaid' : 'postpaid';
-        const verification = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
+        const verifyCacheKey = `verify_meter_${discoCode}_${meterNo}_${typeStr}`;
+        let verification = await getCache(verifyCacheKey);
+
+        if (!verification) {
+            console.log("[Provider] Cache miss for meter verification, calling VTPass...");
+            verification = await vtpassProvider.verifyMeter(discoCode, meterNo, typeStr);
+        } else {
+            console.log("[Cache] Hit for meter verification");
+        }
 
         if (verification.minAmount > billAmount) {
             return res.status(400).json({
@@ -121,23 +133,18 @@ const purchaseElectricity = async (req, res) => {
             });
         }
 
-        // --- IDEMPOTENCY CHECK ---
+        // 2. Optimized Idempotency Check (Fast-path column)
         const idempotencyKey = req.headers['x-idempotency-key'];
-
         if (idempotencyKey) {
-            // Explicit Idempotency
-            const existingTx = await prisma.transaction.findFirst({
-                where: {
-                    userId,
-                    type: TransactionType.ELECTRICITY,
-                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                },
-                select: { id: true }
+            const existingTx = await prisma.transaction.findUnique({
+                where: { idempotencyKey },
+                select: { id: true, reference: true }
             });
             if (existingTx) {
                 return res.status(409).json({
                     status: "ERROR",
-                    message: "A transaction with this idempotency key has already been processed."
+                    message: "Transaction already processed",
+                    transactionId: existingTx.reference
                 });
             }
         } else {
@@ -149,9 +156,7 @@ const purchaseElectricity = async (req, res) => {
                     type: TransactionType.ELECTRICITY,
                     amount: billAmount,
                     createdAt: { gte: sixtySecondsAgo },
-                    metadata: {
-                        path: ['meterNo'], equals: meterNo,
-                    }
+                    metadata: { path: ['meterNo'], equals: meterNo }
                 },
                 select: { id: true, metadata: true }
             });
@@ -210,7 +215,8 @@ const purchaseElectricity = async (req, res) => {
                         recipient: user.phoneNumber,
                         unit: "",
                         ...(idempotencyKey && { idempotencyKey })
-                    }
+                    },
+                    idempotencyKey: idempotencyKey // Optimized column
                 }
             });
 

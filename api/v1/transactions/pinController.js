@@ -41,28 +41,23 @@ const printPins = async (req, res) => {
 
 
     try {
-        const totalCost = faceValue * qty;
-
         // --- IDEMPOTENCY CHECK ---
         const idempotencyKey = req.headers['x-idempotency-key'];
 
         if (idempotencyKey) {
-            // Explicit Idempotency
-            const existingTx = await prisma.transaction.findFirst({
-                where: {
-                    userId,
-                    type: TransactionType.RECHARGE_PIN,
-                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                },
-                select: { id: true }
+            const existingTx = await prisma.transaction.findUnique({
+                where: { idempotencyKey },
+                select: { id: true, reference: true }
             });
             if (existingTx) {
                 return res.status(409).json({
                     status: "ERROR",
-                    message: "A transaction with this idempotency key has already been processed."
+                    message: "Transaction already processed",
+                    transactionId: existingTx.reference
                 });
             }
-        } else {
+        }
+ else {
             // Fallback Time-based Deduplication (60 seconds)
             const sixtySecondsAgo = new Date(Date.now() - 60000);
             const existingTx = await prisma.transaction.findFirst({
@@ -109,7 +104,8 @@ const printPins = async (req, res) => {
                         quantity: qty,
                         faceValue,
                         ...(idempotencyKey && { idempotencyKey })
-                    }
+                    },
+                    idempotencyKey: idempotencyKey // Optimized column
                 }
             });
 

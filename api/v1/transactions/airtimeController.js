@@ -59,22 +59,19 @@ const purchaseAirtime = async (req, res) => {
         const idempotencyKey = req.headers['x-idempotency-key'];
 
         if (idempotencyKey) {
-            // Explicit Idempotency
-            const existingTx = await prisma.transaction.findFirst({
-                where: {
-                    userId,
-                    type: TransactionType.AIRTIME,
-                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                },
-                select: { id: true }
+            const existingTx = await prisma.transaction.findUnique({
+                where: { idempotencyKey },
+                select: { id: true, reference: true }
             });
             if (existingTx) {
                 return res.status(409).json({
                     status: "ERROR",
-                    message: "A transaction with this idempotency key has already been processed."
+                    message: "Transaction already processed",
+                    transactionId: existingTx.reference
                 });
             }
-        } else {
+        }
+ else {
             // Fallback Time-based Deduplication (60 seconds)
             const sixtySecondsAgo = new Date(Date.now() - 60000);
             const existingTx = await prisma.transaction.findFirst({
@@ -140,7 +137,8 @@ const purchaseAirtime = async (req, res) => {
                         faceValue: airtimeAmount,
                         profit: 0,
                         ...(idempotencyKey && { idempotencyKey })
-                    }
+                    },
+                    idempotencyKey: idempotencyKey // Optimized column
                 }
             });
 

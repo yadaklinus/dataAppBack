@@ -96,19 +96,15 @@ const purchaseData = async (req, res) => {
         const idempotencyKey = req.headers['x-idempotency-key'];
 
         if (idempotencyKey) {
-            // Explicit Idempotency
-            const existingTx = await prisma.transaction.findFirst({
-                where: {
-                    userId,
-                    type: TransactionType.DATA,
-                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                },
-                select: { id: true }
+            const existingTx = await prisma.transaction.findUnique({
+                where: { idempotencyKey },
+                select: { id: true, reference: true }
             });
             if (existingTx) {
                 return res.status(409).json({
                     status: "ERROR",
-                    message: "A transaction with this idempotency key has already been processed."
+                    message: "Transaction already processed",
+                    transactionId: existingTx.reference
                 });
             }
         } else {
@@ -176,8 +172,8 @@ const purchaseData = async (req, res) => {
                         recipient: cleanPhone,
                         planName: planName,
                         planId: planId,
-                        ...(idempotencyKey && { idempotencyKey })
-                    }
+                    },
+                    idempotencyKey: idempotencyKey // Fast-path column
                 }
             });
 

@@ -272,6 +272,7 @@ const getAllRequests = async (req, res) => {
         const requests = await prisma.flightBookingRequest.findMany({
             where,
             orderBy: { createdAt: 'desc' },
+            take: 100, // Bound results to prevent heap spikes
             include: { user: { select: { fullName: true, email: true, phoneNumber: true } }, passengers: true }
         });
 
@@ -503,6 +504,7 @@ const getAllFlightTransactions = async (req, res) => {
 
         const transactions = await prisma.flightTransaction.findMany({
             orderBy: { createdAt: 'desc' },
+            take: 100, // Bound results to prevent heap spikes
             include: {
                 wallet: {
                     include: {

@@ -144,6 +144,7 @@ const getUserRequests = async (req, res) => {
         const requests = await prisma.flightBookingRequest.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
+            take: 50, // Bound results for user dashboard
             include: { passengers: true }
         });
 
@@ -279,7 +280,10 @@ const payForFlight = async (req, res) => {
         const requestId = req.params.id;
         const userId = req.user.id;
 
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, transactionPin: true, fullName: true, email: true }
+        });
         if (!user) throw new Error("User not found");
 
         const result = await prisma.$transaction(async (tx) => {
@@ -465,6 +469,7 @@ const getUserFlightTransactions = async (req, res) => {
                 wallet: { userId }
             },
             orderBy: { createdAt: 'desc' },
+            take: 50, // Bound results
             include: {
                 flightRequest: {
                     select: {

@@ -79,7 +79,11 @@ const verifyIUC = async (req, res) => {
     const { cableTV, smartCardNo } = validation.data;
 
     try {
+        const cacheKey = `verify_cable_${cableTV}_${smartCardNo}`;
         const result = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
+
+        // Cache for 10 minutes to support the purchase follow-up
+        await setCache(cacheKey, result, 600);
 
         return res.status(200).json({ status: "OK", data: result });
     } catch (error) {
@@ -107,41 +111,59 @@ const purchaseSubscription = async (req, res) => {
         console.log("Cable TV Purchase Request:", cableTV, packageCode, smartCardNo, amount);
         const userId = req.user.id;
 
-        const verification = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
+        // 1. Optimized Verification Fetch (Cache-first)
+        const verifyCacheKey = `verify_cable_${cableTV}_${smartCardNo}`;
+        let verification = await getCache(verifyCacheKey);
+        
+        if (!verification) {
+            console.log("[Provider] Cache miss for verification, calling VTPass...");
+            verification = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
+        } else {
+            console.log("[Cache] Hit for verification results");
+        }
+        
         const customerName = verification.customer_name;
 
-        const packages = await vtpassProvider.fetchCablePackages(cableTV);
-        const selectedPackage = packages.find(p => p.variation_code === packageCode);
+        // 2. Optimized Idempotency Check (Fast-path column)
+        const idempotencyKey = req.headers['x-idempotency-key'];
+        if (idempotencyKey) {
+            const existingTx = await prisma.transaction.findUnique({
+                where: { idempotencyKey },
+                select: { id: true, reference: true }
+            });
+            if (existingTx) {
+                return res.status(409).json({
+                    status: "ERROR",
+                    message: "A transaction with this idempotency key has already been processed.",
+                    transactionId: existingTx.reference
+                });
+            }
+        }
+
+        // 3. Package Resolution (Optimized)
+        const pkgCacheKey = 'cable_packages_all';
+        const cachedAll = await getCache(pkgCacheKey);
+        let selectedPackage;
+        
+        if (cachedAll && cachedAll.data && cachedAll.data[cableTV.toUpperCase()]) {
+            const providerPackages = cachedAll.data[cableTV.toUpperCase()][0].PRODUCT;
+            selectedPackage = providerPackages.find(p => p.PACKAGE_ID === packageCode);
+        }
+
+        if (!selectedPackage) {
+            const packages = await vtpassProvider.fetchCablePackages(cableTV);
+            selectedPackage = packages.find(p => p.variation_code === packageCode);
+        }
 
         if (!selectedPackage) {
             return res.status(404).json({ status: "ERROR", message: "Invalid package code" });
         }
 
-        // If they pass an amount (e.g., for renewal), verify it against wallet, else use variation amount
-        const amountToDeduct = amount ? Number(amount) : Number(selectedPackage.variation_amount);
-        const packageName = selectedPackage.name;
+        const amountToDeduct = amount ? Number(amount) : Number(selectedPackage.variation_amount || selectedPackage.PACKAGE_AMOUNT);
+        const packageName = selectedPackage.name || selectedPackage.PACKAGE_NAME;
 
-        // --- IDEMPOTENCY CHECK ---
-        const idempotencyKey = req.headers['x-idempotency-key'];
-
-        if (idempotencyKey) {
-            // Explicit Idempotency
-            const existingTx = await prisma.transaction.findFirst({
-                where: {
-                    userId,
-                    type: TransactionType.CABLE_TV,
-                    metadata: { path: ['idempotencyKey'], equals: idempotencyKey }
-                },
-                select: { id: true }
-            });
-            if (existingTx) {
-                return res.status(409).json({
-                    status: "ERROR",
-                    message: "A transaction with this idempotency key has already been processed."
-                });
-            }
-        } else {
-            // Fallback Time-based Deduplication (60 seconds)
+        // Fallback Time-based Deduplication (60 seconds)
+        if (!idempotencyKey) {
             const sixtySecondsAgo = new Date(Date.now() - 60000);
             const existingTx = await prisma.transaction.findFirst({
                 where: {
@@ -149,9 +171,7 @@ const purchaseSubscription = async (req, res) => {
                     type: TransactionType.CABLE_TV,
                     amount: amountToDeduct,
                     createdAt: { gte: sixtySecondsAgo },
-                    metadata: {
-                        path: ['smartCardNo'], equals: smartCardNo,
-                    }
+                    metadata: { path: ['smartCardNo'], equals: smartCardNo }
                 },
                 select: { id: true, metadata: true }
             });
@@ -209,7 +229,8 @@ const purchaseSubscription = async (req, res) => {
                         customerName: customerName,
                         recipient: user.phoneNumber,
                         ...(idempotencyKey && { idempotencyKey })
-                    }
+                    },
+                    idempotencyKey: idempotencyKey // Optimized column
                 }
             });
 

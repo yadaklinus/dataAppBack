@@ -110,26 +110,40 @@ const purchasePin = async (req, res) => {
     console.log(provider, examType, phoneNo, profileId);
     const userId = req.user.id;
 
-    // --- IDEMPOTENCY CHECK ---
-    const sixtySecondsAgo = new Date(Date.now() - 60000);
-    const existingTx = await prisma.transaction.findFirst({
-        where: {
-            userId,
-            type: TransactionType.EDUCATION,
-            amount: { gt: 0 }, // We'll verify cost in a moment, but check for any recent EDU tx
-            metadata: {
-                path: ['provider'], equals: provider,
-            },
-            createdAt: { gte: sixtySecondsAgo }
-        },
-        select: { id: true, metadata: true }
-    });
-
-    if (existingTx && existingTx.metadata && existingTx.metadata.examType === examType && existingTx.metadata.recipient === phoneNo) {
-        return res.status(409).json({
-            status: "ERROR",
-            message: "Identical transaction detected within the last minute. Please wait before retrying."
+    const idempotencyKey = req.headers['x-idempotency-key'];
+    if (idempotencyKey) {
+        const existingTx = await prisma.transaction.findUnique({
+            where: { idempotencyKey },
+            select: { id: true, reference: true }
         });
+        if (existingTx) {
+            return res.status(409).json({
+                status: "ERROR",
+                message: "A transaction with this idempotency key has already been processed.",
+                transactionId: existingTx.reference
+            });
+        }
+    } else {
+        // Fallback Time-based Deduplication (60 seconds)
+        const sixtySecondsAgo = new Date(Date.now() - 60000);
+        const existingTxNum = await prisma.transaction.findFirst({
+            where: {
+                userId,
+                type: TransactionType.EDUCATION,
+                metadata: {
+                    path: ['provider'], equals: provider,
+                },
+                createdAt: { gte: sixtySecondsAgo }
+            },
+            select: { id: true, metadata: true }
+        });
+
+        if (existingTxNum && existingTxNum.metadata && existingTxNum.metadata.examType === examType && existingTxNum.metadata.recipient === phoneNo) {
+            return res.status(409).json({
+                status: "ERROR",
+                message: "Identical transaction detected within the last minute. Please wait before retrying."
+            });
+        }
     }
 
     try {
@@ -219,7 +233,8 @@ const purchasePin = async (req, res) => {
                     type: TransactionType.EDUCATION,
                     status: TransactionStatus.PENDING,
                     reference: requestId,
-                    metadata: txMetadata
+                    metadata: txMetadata,
+                    idempotencyKey: idempotencyKey // Optimized column
                 }
             });
 

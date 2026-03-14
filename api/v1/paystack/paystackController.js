@@ -25,7 +25,10 @@ const initGatewayFunding = async (req, res) => {
     }
 
     try {
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await prisma.user.findUnique({ 
+            where: { id: userId },
+            select: { id: true, email: true }
+        });
         if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
 
         // 1. Initialize Paystack Transaction
@@ -79,7 +82,13 @@ const createAccount = async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: userId },
-            include: { kycData: true }
+            select: { 
+                id: true, 
+                email: true, 
+                fullName: true, 
+                phoneNumber: true,
+                kycData: true 
+            }
         });
 
         if (!user) return res.status(404).json({ status: "ERROR", message: "User not found" });
