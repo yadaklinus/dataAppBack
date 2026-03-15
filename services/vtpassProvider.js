@@ -20,7 +20,8 @@ const getPostHeaders = () => {
     return {
         'api-key': process.env.VTPASS_API_KEY,
         'secret-key': process.env.VTPASS_SECRET_KEY,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'MuftiPay-Backend/1.0.0 (Financial Integrity Layer)'
     };
 };
 
@@ -31,7 +32,8 @@ const getGetHeaders = () => {
     return {
         'api-key': process.env.VTPASS_API_KEY,
         'public-key': process.env.VTPASS_PUBLIC_KEY,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'MuftiPay-Backend/1.0.0 (Financial Integrity Layer)'
     };
 };
 
