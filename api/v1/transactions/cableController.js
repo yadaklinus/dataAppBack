@@ -7,6 +7,7 @@ const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const { normalizeProviderDate } = require('@/lib/dateUtils');
 const bcrypt = require('bcryptjs');
+const { trackEvent } = require('@/lib/analytics');
 // --- SCHEMAS ---
 
 const verifyIUCSchema = z.object({
@@ -276,6 +277,17 @@ const purchaseSubscription = async (req, res) => {
                     status: "PENDING",
                     message: "Cable TV subscription is processing. Please check status history in a moment.",
                     transactionId: result.requestId
+                });
+            }
+
+            if (finalStatus === TransactionStatus.SUCCESS) {
+                trackEvent(req, 'Purchase Success', {
+                    service: 'Cable_TV',
+                    provider: 'VTPass',
+                    cableTV,
+                    packageCode,
+                    amount: amountToDeduct,
+                    smartCardNo
                 });
             }
 

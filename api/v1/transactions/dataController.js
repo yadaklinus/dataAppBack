@@ -6,6 +6,7 @@ const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
+const { trackEvent } = require('@/lib/analytics');
 
 const purchaseDataSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
@@ -218,9 +219,19 @@ const purchaseData = async (req, res) => {
                 });
             }
 
+            if (finalStatus === TransactionStatus.SUCCESS) {
+                trackEvent(req, 'Purchase Success', {
+                    service: 'Data',
+                    provider: 'VTPass',
+                    network,
+                    amount: sellingPrice,
+                    phoneNumber: cleanPhone
+                });
+            }
+
             return res.status(200).json({
                 status: "OK",
-                message: "Data bundle purchased successfully",
+                message: providerResponse.response_description || "Data purchased successfully",
                 transactionId: result.requestId
             });
 
@@ -274,6 +285,13 @@ const getDataStatus = async (req, res) => {
 
                 // Ignore PENDING status (do nothing)
                 if (queryResult && queryResult.status === "SUCCESS") {
+                    trackEvent(req, 'Purchase Success (Sync)', {
+                        service: 'Data',
+                        provider: 'VTPass',
+                        transactionId: txn.reference,
+                        amount: txn.amount
+                    });
+
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
                         data: { status: TransactionStatus.SUCCESS },

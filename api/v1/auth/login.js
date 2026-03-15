@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const prisma = require('@/lib/prisma');
 const crypto = require('crypto');
+const { trackEvent } = require('@/lib/analytics');
 
 const DUMMY_HASH = "$2b$12$invalidhashtopreventtimingattacksXXXXXXXXXXXXXXXXXX";
 
@@ -93,6 +94,9 @@ const login = async (req, res) => {
                 expiresAt
             }
         });
+
+        // 5. Track Login Event
+        trackEvent(req, 'User Login', { userId: user.id, email: user.email });
 
         return res.status(200).json({
             status: "OK",

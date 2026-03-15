@@ -5,6 +5,7 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
+const { trackEvent } = require('@/lib/analytics');
 
 // --- SCHEMAS ---
 
@@ -274,6 +275,15 @@ const purchaseElectricity = async (req, res) => {
                     status: "PENDING",
                     message: "Electricity payment is processing. Please check status history for your token.",
                     transactionId: result.requestId
+                });
+            }
+
+            if (finalStatus === TransactionStatus.SUCCESS) {
+                trackEvent(req, 'Purchase Success', {
+                    service: 'Electricity',
+                    provider: 'VTPass',
+                    meterNo,
+                    amount: billAmount
                 });
             }
 

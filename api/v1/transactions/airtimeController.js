@@ -6,6 +6,7 @@ const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
+const { trackEvent } = require('@/lib/analytics');
 
 /**
  * Handles Airtime Purchase Logic
@@ -185,6 +186,16 @@ const purchaseAirtime = async (req, res) => {
                 });
             }
 
+            if (finalStatus === TransactionStatus.SUCCESS) {
+                trackEvent(req, 'Purchase Success', {
+                    service: 'Airtime',
+                    provider: 'VTPass',
+                    network,
+                    amount: airtimeAmount,
+                    phoneNumber: cleanPhone
+                });
+            }
+
             return res.status(200).json({
                 status: "OK",
                 message: "Airtime purchased successfully",
@@ -247,6 +258,13 @@ const getAirtimeStatus = async (req, res) => {
 
                 // Ignore PENDING status (do nothing)
                 if (queryResult && queryResult.status === "SUCCESS") {
+                    trackEvent(req, 'Purchase Success (Sync)', {
+                        service: 'Airtime',
+                        provider: 'VTPass',
+                        transactionId: txn.reference,
+                        amount: txn.amount
+                    });
+
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
                         data: { status: TransactionStatus.SUCCESS },

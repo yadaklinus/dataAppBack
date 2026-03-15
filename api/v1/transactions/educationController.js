@@ -5,6 +5,7 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
+const { trackEvent } = require('@/lib/analytics');
 
 // --- SCHEMAS ---
 
@@ -277,6 +278,15 @@ const purchasePin = async (req, res) => {
                         webhookPayload: providerResponse
                     }
                 }
+            });
+
+            trackEvent(req, 'Purchase Success', {
+                service: 'Education',
+                provider: 'VTPass',
+                providerType: provider,
+                examType,
+                amount: pinCost,
+                phoneNo
             });
 
             return res.status(200).json({
