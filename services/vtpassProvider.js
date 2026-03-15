@@ -10,7 +10,7 @@ const { normalizeProviderDate } = require('@/lib/dateUtils');
 const getBaseUrl = () => {
     const ENV = process.env.NODE_ENV === 'production' ? 'live' : 'sandbox';
 
-    return ENV === 'live' ? 'https://api.vtpass.com/api' : 'https://sandbox.vtpass.com/api';
+    return 'https://api.vtpass.com/api';
 };
 
 /**
