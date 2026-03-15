@@ -269,7 +269,6 @@ const buyData = async (network, variationCode, phoneNumber, requestId) => {
         });
 
         const data = response.data;
-        console.log("VTPass Data Response:", data);
         return handlePurchaseResponse(data, requestId, "Data purchase failed on VTPass");
     } catch (error) {
         console.error("VTPass Data Error:", error.response?.data || error.message);
