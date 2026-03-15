@@ -20,6 +20,9 @@ async function testUmami() {
         payload: {
             website: websiteId,
             url: '/test-page-diagnostic',
+            hostname: 'api.muftipay.com',
+            screen: '1920x1080',
+            language: 'en-US',
             name: 'Diagnostic Test Event',
             data: {
                 testTime: new Date().toISOString(),
