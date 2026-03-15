@@ -24,8 +24,7 @@ const login = async (req, res) => {
         }
 
         const user = await prisma.user.findUnique({
-            where: { email },
-            include: { kycData: true }
+            where: { email }
         });
 
         // 1. Brute-force Protection: Check Lockout

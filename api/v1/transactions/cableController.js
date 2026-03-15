@@ -185,18 +185,26 @@ const purchaseSubscription = async (req, res) => {
         }
 
         // 3. Atomic Wallet Deduction
-        const result = await prisma.$transaction(async (tx) => {
-            // Verify Transaction PIN
-            user = await tx.user.findUnique({
-                where: { id: userId },
-                select: { id: true, transactionPin: true, phoneNumber: true }
-            });
-            if (!user) throw new Error("User not found");
-            if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
+        
+        // --- PERFORMANCE OPTIMIZATION: PIN VERIFICATION OUTSIDE TRANSACTION ---
+        user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, transactionPin: true, phoneNumber: true }
+        });
+        if (!user) throw new Error("User not found");
+        if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 
-            const isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
+        // Check Redis cache for verified PIN
+        const pinCacheKey = `verified_pin_${userId}_${transactionPin}`;
+        let isPinValid = await getCache(pinCacheKey);
+
+        if (!isPinValid) {
+            isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
             if (!isPinValid) throw new Error("Invalid transaction PIN");
+            await setCache(pinCacheKey, true, 3600);
+        }
 
+        const result = await prisma.$transaction(async (tx) => {
             const walletUpdate = await tx.wallet.updateMany({
                 where: {
                     userId,
