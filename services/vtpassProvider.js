@@ -136,7 +136,6 @@ const buyAirtime = async (network, amount, phoneNumber, requestId) => {
             headers: getPostHeaders()
         });
 
-        console.log("VTPass Airtime Response:", response.data);
 
         const data = response.data;
         return handlePurchaseResponse(data, requestId, "Airtime purchase failed on VTPass");

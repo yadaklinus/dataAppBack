@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 import statusMonitor from 'express-status-monitor';
+import compression from 'compression';
 import { startTransactionSync } from '@/jobs/transactionSync';
 import { validateEnv } from '@/lib/validateEnv';
 
@@ -43,8 +44,14 @@ const PORT: number = Number(process.env.PORT) || 3009;
 // This ensures req.ip is the user's IP, not the server's IP.
 app.set('trust proxy', 1);
 
-// 3. Security & Cross-Origin
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'tiny' : 'dev')); // Optimized logging
+// 3. Middlewares
+app.use(compression()); // Compress all responses for faster transfer
+app.use(statusMonitor({
+    title: 'MuftiPay Server Status',
+    path: '/api/v1/status', // Restricted path
+    spans: [{ interval: 1, retention: 60 }, { interval: 5, retention: 60 }, { interval: 15, retention: 60 }]
+}));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'tiny' : 'dev')); 
 
 // ==========================================
 // TEST ROUTES (Placed before Helmet to avoid CSP blocking inline scripts/CDNs)
