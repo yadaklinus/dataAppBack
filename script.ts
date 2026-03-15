@@ -78,22 +78,26 @@ app.use(cors({
     credentials: true,
 }));
 
-// Real-time dashboard - Protected and placed after helmet
-app.use('/status', requireSuperAdmin, statusMonitor()); 
+// Rate Limit Bypass Helper
+const skipIfTest = (req: Request) => {
+    return req.headers['x-load-test-key'] === process.env.LOAD_TEST_KEY || process.env.NODE_ENV === 'test';
+};
 
 // 4. Rate Limiting
 const globalLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
     max: 100, // limit each IP to 100 requests per windowMs
-    message: { status: "ERROR", message: "Too many requests. Please slow down." }
+    message: { status: "ERROR", message: "Too many requests. Please slow down." },
+    skip: skipIfTest,
 });
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // 10 attempts
+    max: process.env.NODE_ENV === 'development' ? 1000 : 10, // Relaxed for local dev
     message: { status: "ERROR", message: "Too many login/register attempts. Try again in 15 minutes." },
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipIfTest,
 });
 
 const refreshLimiter = rateLimit({
@@ -102,6 +106,7 @@ const refreshLimiter = rateLimit({
     message: { status: "ERROR", message: "Too many refresh attempts. Try again in 15 minutes." },
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipIfTest,
 });
 
 // 5. Body Parsing
