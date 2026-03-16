@@ -1,6 +1,5 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('@/lib/prisma');
-const { trackEvent } = require('@/lib/analytics');
 
 
 if (!process.env.JWT_SECRET) {
@@ -80,7 +79,7 @@ const authMiddleware = async (req, res, next) => {
         }
 
         // PERFORMANCE ANALYTICS: Track route access
-        trackEvent(req, 'Route Access');
+
 
         next(); // Move to the actual route handler
     } catch (error) {

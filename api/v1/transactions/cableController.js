@@ -7,7 +7,6 @@ const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const { normalizeProviderDate } = require('@/lib/dateUtils');
 const bcrypt = require('bcryptjs');
-const { trackEvent } = require('@/lib/analytics');
 // --- SCHEMAS ---
 
 const verifyIUCSchema = z.object({
@@ -115,14 +114,14 @@ const purchaseSubscription = async (req, res) => {
         // 1. Optimized Verification Fetch (Cache-first)
         const verifyCacheKey = `verify_cable_${cableTV}_${smartCardNo}`;
         let verification = await getCache(verifyCacheKey);
-        
+
         if (!verification) {
             console.log("[Provider] Cache miss for verification, calling VTPass...");
             verification = await vtpassProvider.verifySmartCard(cableTV, smartCardNo);
         } else {
             console.log("[Cache] Hit for verification results");
         }
-        
+
         const customerName = verification.customer_name;
 
         // 2. Optimized Idempotency Check (Fast-path column)
@@ -145,7 +144,7 @@ const purchaseSubscription = async (req, res) => {
         const pkgCacheKey = 'cable_packages_all';
         const cachedAll = await getCache(pkgCacheKey);
         let selectedPackage;
-        
+
         if (cachedAll && cachedAll.data && cachedAll.data[cableTV.toUpperCase()]) {
             const providerPackages = cachedAll.data[cableTV.toUpperCase()][0].PRODUCT;
             selectedPackage = providerPackages.find(p => p.PACKAGE_ID === packageCode);
@@ -186,7 +185,7 @@ const purchaseSubscription = async (req, res) => {
         }
 
         // 3. Atomic Wallet Deduction
-        
+
         // --- PERFORMANCE OPTIMIZATION: PIN VERIFICATION OUTSIDE TRANSACTION ---
         user = await prisma.user.findUnique({
             where: { id: userId },
@@ -280,16 +279,7 @@ const purchaseSubscription = async (req, res) => {
                 });
             }
 
-            if (finalStatus === TransactionStatus.SUCCESS) {
-                trackEvent(req, 'Purchase Success', {
-                    service: 'Cable_TV',
-                    provider: 'VTPass',
-                    cableTV,
-                    packageCode,
-                    amount: amountToDeduct,
-                    smartCardNo
-                });
-            }
+
 
             return res.status(200).json({
                 status: "OK",

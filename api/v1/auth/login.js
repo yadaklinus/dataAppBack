@@ -2,7 +2,6 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const prisma = require('@/lib/prisma');
 const crypto = require('crypto');
-const { trackEvent } = require('@/lib/analytics');
 
 const DUMMY_HASH = "$2b$12$invalidhashtopreventtimingattacksXXXXXXXXXXXXXXXXXX";
 
@@ -38,7 +37,7 @@ const login = async (req, res) => {
         }
 
         const hashToCompare = user ? user.passwordHash : DUMMY_HASH;
-        
+
         // PERFORMANCE: Bypass Bcrypt for load tests to save CPU
         const isLoadTest = req.headers['x-load-test-key'] === process.env.LOAD_TEST_KEY;
         const isPasswordValid = isLoadTest ? true : await bcrypt.compare(password, hashToCompare);
@@ -96,7 +95,6 @@ const login = async (req, res) => {
         });
 
         // 5. Track Login Event
-        trackEvent(req, 'User Login', { userId: user.id, email: user.email });
 
         return res.status(200).json({
             status: "OK",

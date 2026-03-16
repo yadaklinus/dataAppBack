@@ -5,7 +5,6 @@ const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
-const { trackEvent } = require('@/lib/analytics');
 
 // --- SCHEMAS ---
 
@@ -171,7 +170,7 @@ const purchaseElectricity = async (req, res) => {
         }
 
         // 2. Database Atomic Operation
-        
+
         // --- PERFORMANCE OPTIMIZATION: PIN VERIFICATION OUTSIDE TRANSACTION ---
         // Fetch user once outside transaction
         user = await prisma.user.findUnique({
@@ -278,14 +277,6 @@ const purchaseElectricity = async (req, res) => {
                 });
             }
 
-            if (finalStatus === TransactionStatus.SUCCESS) {
-                trackEvent(req, 'Purchase Success', {
-                    service: 'Electricity',
-                    provider: 'VTPass',
-                    meterNo,
-                    amount: billAmount
-                });
-            }
 
             return res.status(200).json({
                 status: "OK",

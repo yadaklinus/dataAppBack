@@ -219,15 +219,7 @@ const purchaseData = async (req, res) => {
                 });
             }
 
-            if (finalStatus === TransactionStatus.SUCCESS) {
-                trackEvent(req, 'Purchase Success', {
-                    service: 'Data',
-                    provider: 'VTPass',
-                    network,
-                    amount: sellingPrice,
-                    phoneNumber: cleanPhone
-                });
-            }
+
 
             return res.status(200).json({
                 status: "OK",
@@ -285,12 +277,6 @@ const getDataStatus = async (req, res) => {
 
                 // Ignore PENDING status (do nothing)
                 if (queryResult && queryResult.status === "SUCCESS") {
-                    trackEvent(req, 'Purchase Success (Sync)', {
-                        service: 'Data',
-                        provider: 'VTPass',
-                        transactionId: txn.reference,
-                        amount: txn.amount
-                    });
 
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },

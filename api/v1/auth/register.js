@@ -1,7 +1,6 @@
 const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const prisma = require('@/lib/prisma');
-const { trackEvent } = require('@/lib/analytics');
 const SALT_ROUNDS = 12;
 
 const registerSchema = z.object({
@@ -83,7 +82,6 @@ const register = async (req, res) => {
         });
 
         // 5. Track Registration Event
-        trackEvent(req, 'User Registration', { userId: newUser.id, email: newUser.email });
 
         // 6. Success Response
         res.status(201).json({

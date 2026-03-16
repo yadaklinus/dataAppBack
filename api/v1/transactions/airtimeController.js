@@ -72,7 +72,7 @@ const purchaseAirtime = async (req, res) => {
                 });
             }
         }
- else {
+        else {
             // Fallback Time-based Deduplication (60 seconds)
             const sixtySecondsAgo = new Date(Date.now() - 60000);
             const existingTx = await prisma.transaction.findFirst({
@@ -97,7 +97,7 @@ const purchaseAirtime = async (req, res) => {
         }
 
         // 1. Database Atomic Operation
-        
+
         // --- PERFORMANCE OPTIMIZATION: PIN VERIFICATION OUTSIDE TRANSACTION ---
         const user = await prisma.user.findUnique({
             where: { id: userId },
@@ -186,15 +186,7 @@ const purchaseAirtime = async (req, res) => {
                 });
             }
 
-            if (finalStatus === TransactionStatus.SUCCESS) {
-                trackEvent(req, 'Purchase Success', {
-                    service: 'Airtime',
-                    provider: 'VTPass',
-                    network,
-                    amount: airtimeAmount,
-                    phoneNumber: cleanPhone
-                });
-            }
+
 
             return res.status(200).json({
                 status: "OK",
@@ -258,12 +250,7 @@ const getAirtimeStatus = async (req, res) => {
 
                 // Ignore PENDING status (do nothing)
                 if (queryResult && queryResult.status === "SUCCESS") {
-                    trackEvent(req, 'Purchase Success (Sync)', {
-                        service: 'Airtime',
-                        provider: 'VTPass',
-                        transactionId: txn.reference,
-                        amount: txn.amount
-                    });
+
 
                     txn = await prisma.transaction.update({
                         where: { id: txn.id },
