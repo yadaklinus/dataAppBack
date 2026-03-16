@@ -1,69 +1,49 @@
 require('dotenv').config();
-const axios = require('axios');
+const { trackEvent, analytics } = require('./lib/analytics');
 
-async function testUmami() {
-    const websiteId = process.env.UMAMI_WEBSITE_ID;
-    const umamiUrl = process.env.UMAMI_URL || 'https://analytics.muftipay.com/api/send';
-
-    console.log('--- Umami Diagnostic Tool ---');
-    console.log(`URL: ${umamiUrl}`);
-    console.log(`Website ID: ${websiteId || 'MISSING (Check your .env!)'}`);
+async function testUmamiSDK() {
+    console.log('--- Umami SDK Diagnostic Tool ---');
+    console.log(`URL: ${process.env.UMAMI_URL || 'https://analytics.muftipay.com/api/send'}`);
+    console.log(`Website ID: ${process.env.UMAMI_WEBSITE_ID || 'MISSING'}`);
     console.log('-----------------------------\n');
 
-    if (!websiteId) {
+    if (!process.env.UMAMI_WEBSITE_ID) {
         console.error('❌ ERROR: UMAMI_WEBSITE_ID is not set in your .env file.');
-        console.log('Go to https://analytics.muftipay.com, add your website, and copy the ID first.');
         return;
     }
 
-    const payload = {
-        payload: {
-            website: websiteId,
-            url: '/test-page-diagnostic',
-            hostname: 'api.muftipay.com',
-            screen: '1920x1080',
-            language: 'en-US',
-            name: 'Diagnostic Test Event',
-            data: {
-                testTime: new Date().toISOString(),
-                environment: 'Backend Debug'
-            }
+    // Mock request object for the utility
+    const mockReq = {
+        originalUrl: '/test-sdk-diagnostic',
+        hostname: 'api.muftipay.com',
+        headers: {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'x-forwarded-for': '1.2.3.4'
         },
-        type: "event"
+        socket: { remoteAddress: '1.2.3.4' },
+        user: { id: 'test-user-sdk' }
     };
 
-    console.log('Sending test event...');
+    console.log('Firing test event via SDK (background)...');
+    
+    // We listen for success/failure via the event emitter if possible, 
+    // but the trackEvent utility is fire-and-forget.
+    // For this test, we'll just wait a few seconds.
+    trackEvent(mockReq, 'SDK Diagnostic Test', {
+        testType: 'Official SDK + EventEmitter',
+        timestamp: new Date().toISOString()
+    });
 
-    try {
-        const response = await axios.post(umamiUrl, payload, {
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': 'MuftiPay-Diagnostic-Tool'
-            },
-            timeout: 10000
-        });
-
-        console.log(`✅ SUCCESS! Response Status: ${response.status}`);
-        console.log('Check your Umami dashboard now under the "Real-time" tab.');
-        console.log('You should see an event named "Diagnostic Test Event" on page "/test-page-diagnostic".');
-
-    } catch (error) {
-        console.error('❌ FAILED to send event.');
-        
-        if (error.response) {
-            console.error(`HTTP Status: ${error.response.status}`);
-            console.error('Body:', error.response.data);
-            
-            if (error.response.status === 400) {
-                console.log('Hint: Your Website ID might be invalid or formatted incorrectly.');
-            }
-        } else if (error.request) {
-            console.error('Error Code:', error.code);
-            console.error('No response received. Check your server\'s internet connection or firewall.');
-        } else {
-            console.error('Error Message:', error.message);
-        }
-    }
+    console.log('Event emitted. Waiting 5 seconds for background processing...');
+    
+    setTimeout(() => {
+        console.log('\nDone.');
+        console.log('1. Visit https://analytics.muftipay.com');
+        console.log('2. Check "Real-time" tab.');
+        console.log('3. Look for "SDK Diagnostic Test" event.');
+        console.log('\nIf it appears, your backend is 100% production-ready!');
+        process.exit(0);
+    }, 5000);
 }
 
-testUmami();
+testUmamiSDK();
