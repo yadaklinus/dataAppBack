@@ -6,7 +6,6 @@ const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
-const { trackEvent } = require('@/lib/analytics');
 
 const purchaseDataSchema = z.object({
     network: z.enum(['MTN', 'GLO', 'AIRTEL', '9MOBILE']),
