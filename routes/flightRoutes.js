@@ -5,6 +5,11 @@ const userController = require('@/api/v1/flights/userFlightController');
 const staffController = require('@/api/v1/flights/staffFlightController');
 const templateController = require('@/api/v1/flights/flightTemplateController');
 
+// Public route - no auth required
+router.get('/link', (req, res) => {
+  res.json({ url: 'https://www.travelstart.com.ng/?affId=223554&utm_source=affiliate&utm_medium=223554' });
+});
+
 // All flight routes require authentication
 router.use(authMiddleware);
 
