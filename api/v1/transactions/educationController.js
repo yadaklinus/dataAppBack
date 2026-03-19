@@ -89,36 +89,36 @@ const EDUCATION_PRODUCTS = {
             provider: 'NAIJA_RESULT_PINS'
         }
     ],
-    JAMB: [
-        {
-            PRODUCT_SNO: "1",
-            PRODUCT_CODE: "utme-no-mock",
-            PRODUCT_ID: "utme-no-mock",
-            PRODUCT_NAME: 'JAMB UTME (No Mock)',
-            PRODUCT_AMOUNT: "6050", // VTPass price
-            SELLING_PRICE: 6200,
-            color: '#6366f1',
-            lightColor: '#eef2ff',
-            subtitle: 'UTME registration without mock exam',
-            type: 'JAMB',
-            provider: 'VTPASS'
-        }
-    ],
-    JAMB_MOCK: [
-        {
-            PRODUCT_SNO: "1",
-            PRODUCT_CODE: "utme-mock",
-            PRODUCT_ID: "utme-mock",
-            PRODUCT_NAME: 'JAMB UTME (With Mock)',
-            PRODUCT_AMOUNT: "7550", // VTPass price
-            SELLING_PRICE: 7700,
-            color: '#8b5cf6',
-            lightColor: '#f5f3ff',
-            subtitle: 'UTME registration including mock exam',
-            type: 'JAMB_MOCK',
-            provider: 'VTPASS'
-        }
-    ]
+    // JAMB: [
+    //     {
+    //         PRODUCT_SNO: "1",
+    //         PRODUCT_CODE: "utme-no-mock",
+    //         PRODUCT_ID: "utme-no-mock",
+    //         PRODUCT_NAME: 'JAMB UTME (No Mock)',
+    //         PRODUCT_AMOUNT: "6050", // VTPass price
+    //         SELLING_PRICE: 6200,
+    //         color: '#6366f1',
+    //         lightColor: '#eef2ff',
+    //         subtitle: 'UTME registration without mock exam',
+    //         type: 'JAMB',
+    //         provider: 'VTPASS'
+    //     }
+    // ],
+    // JAMB_MOCK: [
+    //     {
+    //         PRODUCT_SNO: "1",
+    //         PRODUCT_CODE: "utme-mock",
+    //         PRODUCT_ID: "utme-mock",
+    //         PRODUCT_NAME: 'JAMB UTME (With Mock)',
+    //         PRODUCT_AMOUNT: "7550", // VTPass price
+    //         SELLING_PRICE: 7700,
+    //         color: '#8b5cf6',
+    //         lightColor: '#f5f3ff',
+    //         subtitle: 'UTME registration including mock exam',
+    //         type: 'JAMB_MOCK',
+    //         provider: 'VTPASS'
+    //     }
+    // ]
 };
 
 const getPackages = async (req, res) => {
