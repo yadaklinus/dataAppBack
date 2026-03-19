@@ -466,6 +466,126 @@ const getAirtimeAnalytics = async (req, res) => {
     }
 };
 
+/**
+ * GET /api/v1/admin/analytics/education
+ */
+const getEducationAnalytics = async (req, res) => {
+    try {
+        const { period = 'month' } = req.query;
+        const { start } = getPeriodDates(period);
+
+        const [totals, providerStats] = await Promise.all([
+            prisma.transaction.aggregate({
+                where: { type: 'EDUCATION', status: 'SUCCESS', createdAt: { gte: start } },
+                _sum: { amount: true },
+                _count: { _all: true }
+            }),
+            prisma.$queryRaw`
+                SELECT 
+                    COALESCE(metadata->>'provider', metadata->>'exam_type', 'Unknown') as name,
+                    SUM(amount)::FLOAT as revenue,
+                    COUNT(*)::INT as count
+                FROM "Transaction"
+                WHERE type = 'EDUCATION' AND status = 'SUCCESS' AND "createdAt" >= ${start}
+                GROUP BY 1
+            `
+        ]);
+
+        const byProvider = {};
+        providerStats.forEach(p => byProvider[p.name] = { ...p });
+
+        return res.status(200).json({
+            status: "OK",
+            data: {
+                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
+                byProvider
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "ERROR", message: error.message });
+    }
+};
+
+/**
+ * GET /api/v1/admin/analytics/electricity
+ */
+const getElectricityAnalytics = async (req, res) => {
+    try {
+        const { period = 'month' } = req.query;
+        const { start } = getPeriodDates(period);
+
+        const [totals, discoStats] = await Promise.all([
+            prisma.transaction.aggregate({
+                where: { type: 'ELECTRICITY', status: 'SUCCESS', createdAt: { gte: start } },
+                _sum: { amount: true },
+                _count: { _all: true }
+            }),
+            prisma.$queryRaw`
+                SELECT 
+                    COALESCE(metadata->>'disco', metadata->>'discoCode', 'Unknown') as name,
+                    SUM(amount)::FLOAT as revenue,
+                    COUNT(*)::INT as count
+                FROM "Transaction"
+                WHERE type = 'ELECTRICITY' AND status = 'SUCCESS' AND "createdAt" >= ${start}
+                GROUP BY 1
+            `
+        ]);
+
+        const byProvider = {};
+        discoStats.forEach(p => byProvider[p.name] = { ...p });
+
+        return res.status(200).json({
+            status: "OK",
+            data: {
+                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
+                byProvider
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "ERROR", message: error.message });
+    }
+};
+
+/**
+ * GET /api/v1/admin/analytics/cable
+ */
+const getCableAnalytics = async (req, res) => {
+    try {
+        const { period = 'month' } = req.query;
+        const { start } = getPeriodDates(period);
+
+        const [totals, cableStats] = await Promise.all([
+            prisma.transaction.aggregate({
+                where: { type: 'CABLE_TV', status: 'SUCCESS', createdAt: { gte: start } },
+                _sum: { amount: true },
+                _count: { _all: true }
+            }),
+            prisma.$queryRaw`
+                SELECT 
+                    COALESCE(metadata->>'cable_tv', metadata->>'cableTV', 'Unknown') as name,
+                    SUM(amount)::FLOAT as revenue,
+                    COUNT(*)::INT as count
+                FROM "Transaction"
+                WHERE type = 'CABLE_TV' AND status = 'SUCCESS' AND "createdAt" >= ${start}
+                GROUP BY 1
+            `
+        ]);
+
+        const byProvider = {};
+        cableStats.forEach(p => byProvider[p.name] = { ...p });
+
+        return res.status(200).json({
+            status: "OK",
+            data: {
+                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
+                byProvider
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "ERROR", message: error.message });
+    }
+};
+
 module.exports = {
     getOverview,
     getRevenueChart,
@@ -475,5 +595,8 @@ module.exports = {
     getProviderWallets,
     getFundingAnalytics,
     getDataAnalytics,
-    getAirtimeAnalytics
+    getAirtimeAnalytics,
+    getEducationAnalytics,
+    getElectricityAnalytics,
+    getCableAnalytics
 };

@@ -13,6 +13,9 @@ router.get('/transactions', analyticsController.getTransactions);
 router.get('/users', analyticsController.getUsers);
 router.get('/data', analyticsController.getDataAnalytics);
 router.get('/airtime', analyticsController.getAirtimeAnalytics);
+router.get('/education', analyticsController.getEducationAnalytics);
+router.get('/electricity', analyticsController.getElectricityAnalytics);
+router.get('/cable', analyticsController.getCableAnalytics);
 router.get('/provider-wallets', analyticsController.getProviderWallets);
 router.get('/funding', analyticsController.getFundingAnalytics);
 
