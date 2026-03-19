@@ -41,7 +41,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
     const validEvents = ['charge.completed', 'BANK_TRANSFER_TRANSACTION', 'transfer.completed'];
 
     if (!validEvents.includes(eventType) || payload.data.status !== 'successful') {
-        console.log(`[Webhook] Ignored event: ${eventType} | Status: ${payload.data.status}`);
         return;
     }
 
@@ -96,7 +95,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                 });
 
                 if (flightReq.status !== 'QUOTED') {
-                    console.log(`[Webhook] Flight ${flightReq.id} already processed.`);
                     return;
                 }
 
@@ -114,7 +112,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                         actionDetails: `User paid NGN ${totalPaidByCustomer} via Flutterwave Transfer`
                     }
                 });
-                console.log(`[Webhook] Flight Payment SUCCESS: Request ${flightTx.flightRequestId}`);
             }, {
                 maxWait: 10000,
                 timeout: 15000
@@ -194,7 +191,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                 });
 
                 if (updateResult.count === 0) {
-                    console.log(`[Webhook] Duplicate Gateway webhook suppressed: ${flwId}`);
                     return; // Another thread already updated this
                 }
                 isNewSuccess = true;
@@ -220,7 +216,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                     isNewSuccess = true;
                 } catch (e) {
                     if (e.code === 'P2002') {
-                        console.log(`[Webhook] Duplicate Virtual Account webhook suppressed: ${flwId}`);
                         return; // Another thread already inserted this record
                     }
                     throw e;
@@ -240,7 +235,6 @@ const handleFlutterwaveWebhook = async (req, res) => {
                     }
                 });
 
-                console.log(`[Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
             }
         }, {
             maxWait: 10000,

@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const prisma = require('@/lib/prisma');
 const eduProvider = require('@/services/vtpassProvider');
+const naijaProvider = require('@/services/naijaResultPinsProvider');
 const { TransactionStatus, TransactionType } = require('@prisma/client');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
@@ -9,8 +10,8 @@ const bcrypt = require('bcryptjs');
 // --- SCHEMAS ---
 
 const getPackagesSchema = z.object({
-    provider: z.enum(["WAEC", "JAMB"], {
-        errorMap: () => ({ message: "Provider must be either WAEC or JAMB" })
+    provider: z.enum(["WAEC", "JAMB", "NECO", "NABTEB"], {
+        errorMap: () => ({ message: "Provider must be WAEC, JAMB, NECO, or NABTEB" })
     })
 });
 
@@ -20,8 +21,8 @@ const verifyJambSchema = z.object({
 
 // FIX: Removed 'amount' entirely. The client has no say in the pricing.
 const purchasePinSchema = z.object({
-    provider: z.enum(["WAEC", "JAMB"], {
-        errorMap: () => ({ message: "Provider must be either WAEC or JAMB" })
+    provider: z.enum(["WAEC", "JAMB", "NECO", "NABTEB"], {
+        errorMap: () => ({ message: "Provider must be WAEC, JAMB, NECO, or NABTEB" })
     }),
     examType: z.string().min(1, "Exam type is required"), // This maps to PRODUCT_CODE
     phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
@@ -42,6 +43,82 @@ const formatZodError = (error) => {
 
 const { getCache, setCache } = require('@/lib/redis');
 
+const EDUCATION_PRODUCTS = {
+    WAEC: [
+        {
+            PRODUCT_SNO: "1",
+            PRODUCT_CODE: "waecdirect",
+            PRODUCT_ID: "1", // NaijaResultPins card_type_id
+            PRODUCT_NAME: 'WAEC Result Checker',
+            PRODUCT_AMOUNT: "3350",
+            SELLING_PRICE: 3500,
+            color: '#10b981',
+            lightColor: '#ecfdf5',
+            subtitle: 'Check WAEC/WASSCE results instantly',
+            type: 'WAEC',
+            provider: 'NAIJA_RESULT_PINS'
+        }
+    ],
+    NECO: [
+        {
+            PRODUCT_SNO: "1",
+            PRODUCT_CODE: "necotoken",
+            PRODUCT_ID: "2", // Assuming 2 for NECO
+            PRODUCT_NAME: 'NECO Result Token',
+            PRODUCT_AMOUNT: "950",
+            SELLING_PRICE: 1100,
+            color: '#f59e0b',
+            lightColor: '#fef3c7',
+            subtitle: 'Check NECO results with token',
+            type: 'NECO',
+            provider: 'NAIJA_RESULT_PINS'
+        }
+    ],
+    NABTEB: [
+        {
+            PRODUCT_SNO: "1",
+            PRODUCT_CODE: "nabtebdirect",
+            PRODUCT_ID: "3", // Assuming 3 for NABTEB
+            PRODUCT_NAME: 'NABTEB Result Checker',
+            PRODUCT_AMOUNT: "950",
+            SELLING_PRICE: 1100,
+            color: '#ef4444',
+            lightColor: '#fee2e2',
+            subtitle: 'Check NABTEB results instantly',
+            type: 'NABTEB',
+            provider: 'NAIJA_RESULT_PINS'
+        }
+    ],
+    JAMB: [
+        {
+            PRODUCT_SNO: "1",
+            PRODUCT_CODE: "utme-no-mock",
+            PRODUCT_ID: "utme-no-mock",
+            PRODUCT_NAME: 'JAMB UTME (No Mock)',
+            PRODUCT_AMOUNT: "6050", // VTPass price
+            SELLING_PRICE: 6200,
+            color: '#6366f1',
+            lightColor: '#eef2ff',
+            subtitle: 'UTME registration without mock exam',
+            type: 'JAMB',
+            provider: 'VTPASS'
+        },
+        {
+            PRODUCT_SNO: "2",
+            PRODUCT_CODE: "utme-mock",
+            PRODUCT_ID: "utme-mock",
+            PRODUCT_NAME: 'JAMB UTME (With Mock)',
+            PRODUCT_AMOUNT: "7550", // VTPass price
+            SELLING_PRICE: 7700,
+            color: '#8b5cf6',
+            lightColor: '#f5f3ff',
+            subtitle: 'UTME registration including mock exam',
+            type: 'JAMB_MOCK',
+            provider: 'VTPASS'
+        }
+    ]
+};
+
 const getPackages = async (req, res) => {
     const validation = getPackagesSchema.safeParse(req.query);
 
@@ -54,25 +131,12 @@ const getPackages = async (req, res) => {
 
     const { provider } = validation.data;
 
-    try {
-        const cacheKey = `edu_packages_${provider.toLowerCase()}`;
-        const cachedData = await getCache(cacheKey);
-
-        if (cachedData) {
-            console.log(`[Cache] Hit for ${cacheKey}`);
-            return res.status(200).json(cachedData);
-        }
-
-        console.log(`[Cache] Miss for ${cacheKey}`);
-        const result = await eduProvider.fetchEducationPackages(provider);
-
-        // Cache for 24 hours
-        await setCache(cacheKey, result, 86400);
-
-        return res.status(200).json(result);
-    } catch (error) {
-        return res.status(400).json({ status: "ERROR", message: error.message });
-    }
+    // Return hardcoded products
+    const products = EDUCATION_PRODUCTS[provider] || [];
+    return res.status(200).json({
+        status: "OK",
+        data: products
+    });
 };
 
 const verifyJamb = async (req, res) => {
@@ -145,18 +209,10 @@ const purchasePin = async (req, res) => {
             });
         }
     }
-
     try {
-        // 1. Fetch Authoritative Pricing from Provider (VTPass wraps it in EXAM_TYPE array for legacy compatibility)
-        const packageData = await eduProvider.fetchEducationPackages(provider);
-        const availablePackages = packageData.EXAM_TYPE || [];
-
-        console.log("availablePackages", availablePackages)
-
-        // Match the requested examType with the provider's PRODUCT_CODE
-        const selectedPkg = availablePackages.find(p => p.PRODUCT_CODE === examType);
-
-        console.log("selectedPkg", selectedPkg)
+        // 1. Match the requested examType with our hardcoded products to get the correct provider and price
+        const products = EDUCATION_PRODUCTS[provider] || [];
+        const selectedPkg = products.find(p => p.PRODUCT_CODE === examType);
 
         if (!selectedPkg) {
             return res.status(404).json({
@@ -165,10 +221,10 @@ const purchasePin = async (req, res) => {
             });
         }
 
-        // Selected package contains the user selling price (VTPass amount + our markup)
-        // But we must pay VTPass exactly what they charge, which is PRODUCT_AMOUNT
         const pinCost = Number(selectedPkg.SELLING_PRICE);
         const providerCost = Number(selectedPkg.PRODUCT_AMOUNT);
+        const providerType = selectedPkg.provider;
+        const cardTypeId = selectedPkg.PRODUCT_ID;
 
         // 2. JAMB Profile Verification (Auto-fetch name)
         let customerName = null;
@@ -253,16 +309,21 @@ const purchasePin = async (req, res) => {
             timeout: 30000
         });
 
-        // 3. Call External Provider (VTPass)
+        // 3. Call External Provider
         try {
-            const providerResponse = await eduProvider.buyEducationPin(
-                provider.toUpperCase(),
-                examType,
-                phoneNo,
-                profileId, // Specifically used for JAMB
-                providerCost, // Amount VTPass expects
-                result.requestId
-            );
+            let providerResponse;
+            if (providerType === 'NAIJA_RESULT_PINS') {
+                providerResponse = await naijaProvider.buyExamCard(cardTypeId, 1);
+            } else {
+                providerResponse = await eduProvider.buyEducationPin(
+                    provider.toUpperCase(),
+                    examType,
+                    phoneNo,
+                    profileId, // Specifically used for JAMB
+                    providerCost, // Amount VTPass expects
+                    result.requestId
+                );
+            }
 
             // 4. Finalize Transaction with PIN Details
             await prisma.transaction.update({

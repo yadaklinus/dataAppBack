@@ -21,7 +21,7 @@ const handleVTPassWebhook = async (req, res) => {
         if (type === 'transaction-update') {
             await processTransactionUpdate(data);
         } else {
-            console.log(`[VTPass Webhook] Ignored event type: ${type}`);
+            // Ignored event
         }
     } catch (error) {
         console.error("[VTPass Webhook] Logic Error:", error.message);
@@ -65,12 +65,10 @@ const processTransactionUpdate = async (data) => {
     });
 
     if (!existingTx) {
-        console.log(`[VTPass Webhook] Skipping Ref ${requestId}: Transaction not found.`);
         return;
     }
 
     if (existingTx.status !== TransactionStatus.PENDING) {
-        console.log(`[VTPass Webhook] Skipping Ref ${requestId}: Already processed (Status: ${existingTx.status}).`);
         return;
     }
 
@@ -113,7 +111,6 @@ const processTransactionUpdate = async (data) => {
             }
         });
 
-        console.log(`[VTPass Webhook] SUCCESS: Ref ${requestId} delivered. Token: ${tokenToSave ? 'Yes' : 'No'}`);
 
     } else if (providerStatus === 'reversed' || code === '040' || providerStatus === 'failed') {
         // REVERSAL OR FAILURE => Refund Wallet
@@ -150,9 +147,8 @@ const processTransactionUpdate = async (data) => {
             timeout: 15000
         });
 
-        console.log(`[VTPass Webhook] REVERSED: Ref ${requestId}. Refunded ₦${amountToRefund} to user ${userId}.`);
     } else {
-        console.log(`[VTPass Webhook] Ignored Status: ${providerStatus} for Ref ${requestId}`);
+        // Ignored Status
     }
 };
 

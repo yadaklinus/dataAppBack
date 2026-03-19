@@ -41,7 +41,7 @@ const handlePaystackWebhook = async (req, res) => {
             await handleDvaAssignment(data);
         }
         else {
-            console.log(`[Paystack Webhook] Ignored event: ${event}`);
+            // Ignored event
         }
     } catch (error) {
         console.error("[Paystack Webhook] Logic Error:", error.message);
@@ -80,7 +80,6 @@ const handleChargeSuccess = async (data) => {
         });
 
         if (!existingTx || existingTx.status !== TransactionStatus.PENDING) {
-            console.log(`[Paystack Webhook] Skipping: Ref ${reference} already processed or unknown.`);
             return;
         }
 
@@ -110,7 +109,6 @@ const handleChargeSuccess = async (data) => {
             }
         });
 
-        console.log(`[Paystack Webhook] SUCCESS: User ${userId} wallet +₦${walletCreditAmount}`);
     }, {
         maxWait: 10000,
         timeout: 15000
@@ -138,7 +136,7 @@ const handleDvaAssignment = async (data) => {
         });
 
         if (!user || !user.kycData) {
-            console.error(`[Paystack Webhook] User not found for DVA: ${customerEmail}`);
+            console.error(`[Paystack Webhook] User not found for DVA (Email redacted)`);
             return;
         }
 
@@ -152,7 +150,6 @@ const handleDvaAssignment = async (data) => {
             }
         });
 
-        console.log(`[Paystack Webhook] DVA Assigned: ${customerEmail} | ${bankDetails.account_number}`);
     } catch (error) {
         console.error("[Paystack Webhook] DVA Logic Error:", error.message);
     }

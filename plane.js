@@ -61,8 +61,6 @@ const searchFlights = async () => {
         const result = await parser.parseStringPromise(response.data);
 
         // 3. Log the formatted response
-        console.log("--- SEARCH RESULTS ---");
-        console.dir(result, { depth: null }); // Allows you to see deep nested objects
 
     } catch (error) {
         if (error.response) {

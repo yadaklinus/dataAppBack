@@ -30,6 +30,7 @@ const login = async (req, res) => {
         // 1. Brute-force Protection: Check Lockout
         if (user && user.lockoutUntil && user.lockoutUntil > new Date()) {
             const minutesLeft = Math.ceil((user.lockoutUntil - new Date()) / (60 * 1000));
+            
             return res.status(423).json({
                 status: "ERROR",
                 message: `Account is temporarily locked. Try again in ${minutesLeft} minutes.`
