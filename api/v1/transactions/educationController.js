@@ -10,8 +10,8 @@ const bcrypt = require('bcryptjs');
 // --- SCHEMAS ---
 
 const getPackagesSchema = z.object({
-    provider: z.enum(["WAEC", "JAMB", "NECO", "NABTEB"], {
-        errorMap: () => ({ message: "Provider must be WAEC, JAMB, NECO, or NABTEB" })
+    provider: z.enum(["WAEC", "JAMB", "JAMB_MOCK", "NECO", "NABTEB"], {
+        errorMap: () => ({ message: "Provider must be WAEC, JAMB, JAMB_MOCK, NECO, or NABTEB" })
     })
 });
 
@@ -21,15 +21,15 @@ const verifyJambSchema = z.object({
 
 // FIX: Removed 'amount' entirely. The client has no say in the pricing.
 const purchasePinSchema = z.object({
-    provider: z.enum(["WAEC", "JAMB", "NECO", "NABTEB"], {
-        errorMap: () => ({ message: "Provider must be WAEC, JAMB, NECO, or NABTEB" })
+    provider: z.enum(["WAEC", "JAMB", "JAMB_MOCK", "NECO", "NABTEB"], {
+        errorMap: () => ({ message: "Provider must be WAEC, JAMB, JAMB_MOCK, NECO, or NABTEB" })
     }),
     examType: z.string().min(1, "Exam type is required"), // This maps to PRODUCT_CODE
     phoneNo: z.string().regex(/^(\+234|0)[789][01]\d{8}$/, "Invalid Nigerian phone number"),
     profileId: z.string().optional(),
     transactionPin: z.string().length(4, "Transaction PIN must be 4 digits")
 }).refine((data) => {
-    if (data.provider === 'JAMB' && !data.profileId) return false;
+    if ((data.provider === 'JAMB' || data.provider === 'JAMB_MOCK') && !data.profileId) return false;
     return true;
 }, {
     message: "JAMB Profile ID is required for JAMB purchases",
@@ -65,8 +65,8 @@ const EDUCATION_PRODUCTS = {
             PRODUCT_CODE: "necotoken",
             PRODUCT_ID: "2", // Assuming 2 for NECO
             PRODUCT_NAME: 'NECO Result Token',
-            PRODUCT_AMOUNT: "950",
-            SELLING_PRICE: 1100,
+            PRODUCT_AMOUNT: "1135",
+            SELLING_PRICE: 1500,
             color: '#f59e0b',
             lightColor: '#fef3c7',
             subtitle: 'Check NECO results with token',
@@ -80,8 +80,8 @@ const EDUCATION_PRODUCTS = {
             PRODUCT_CODE: "nabtebdirect",
             PRODUCT_ID: "3", // Assuming 3 for NABTEB
             PRODUCT_NAME: 'NABTEB Result Checker',
-            PRODUCT_AMOUNT: "950",
-            SELLING_PRICE: 1100,
+            PRODUCT_AMOUNT: "1135",
+            SELLING_PRICE: 1500,
             color: '#ef4444',
             lightColor: '#fee2e2',
             subtitle: 'Check NABTEB results instantly',
@@ -102,9 +102,11 @@ const EDUCATION_PRODUCTS = {
             subtitle: 'UTME registration without mock exam',
             type: 'JAMB',
             provider: 'VTPASS'
-        },
+        }
+    ],
+    JAMB_MOCK: [
         {
-            PRODUCT_SNO: "2",
+            PRODUCT_SNO: "1",
             PRODUCT_CODE: "utme-mock",
             PRODUCT_ID: "utme-mock",
             PRODUCT_NAME: 'JAMB UTME (With Mock)',
@@ -228,7 +230,7 @@ const purchasePin = async (req, res) => {
 
         // 2. JAMB Profile Verification (Auto-fetch name)
         let customerName = null;
-        if (provider === 'JAMB' && profileId) {
+        if ((provider === 'JAMB' || provider === 'JAMB_MOCK') && profileId) {
             try {
                 // Verify the profile ID to ensure it's valid before charging them
                 const verifyResult = await eduProvider.verifyJambProfile(profileId, 'utme');

@@ -86,7 +86,8 @@ const CABLE_SERVICE_IDS = {
 
 const EDUCATION_SERVICE_IDS = {
     'WAEC': 'waec',
-    'JAMB': 'jamb'
+    'JAMB': 'jamb',
+    'JAMB_MOCK': 'jamb'
 };
 
 const ELECTRICITY_SERVICE_IDS = {
@@ -595,7 +596,7 @@ const buyEducationPin = async (provider, variationCode, phoneNo, profileId, amou
         const serviceID = EDUCATION_SERVICE_IDS[provider.toUpperCase()];
         if (!serviceID) throw new Error("Invalid education provider for VTPass");
 
-        const isJamb = provider.toUpperCase() === 'JAMB';
+        const isJamb = provider.toUpperCase() === 'JAMB' || provider.toUpperCase() === 'JAMB_MOCK';
 
         const payload = {
             request_id: requestId,
