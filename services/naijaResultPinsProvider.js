@@ -64,6 +64,18 @@ const buyExamCard = async (cardTypeId, quantity = 1) => {
     }
 };
 
+const getWalletBalance = async () => {
+    try {
+        // Standalone balance check for NaijaResultPins isn't documented clearly as GET
+        // But many providers use /user or /wallet/balance
+        // For now, returning 0 or trying a generic endpoint if we find it
+        return { balance: 0, currency: "NGN", note: "Standalone balance check not implemented" };
+    } catch (error) {
+        return { balance: 0, currency: "NGN" };
+    }
+};
+
 module.exports = {
-    buyExamCard
+    buyExamCard,
+    getWalletBalance
 };

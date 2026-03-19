@@ -688,6 +688,24 @@ const queryTransaction = async (requestId) => {
     }
 };
 
+const getWalletBalance = async () => {
+    try {
+        const response = await axios.get(`${getBaseUrl()}/balance`, {
+            headers: getGetHeaders()
+        });
+        if (response.data.code === "000") {
+            return {
+                balance: parseFloat(response.data.content.balance),
+                currency: "NGN"
+            };
+        }
+        throw new Error(response.data.response_description || "Failed to fetch VTPass balance");
+    } catch (error) {
+        console.error("VTPass Balance Error:", error.message);
+        throw error;
+    }
+};
+
 module.exports = {
     buyAirtime,
     buyData,
@@ -704,5 +722,6 @@ module.exports = {
     calculateMyPrice,
     fetchEducationPackages,
     verifyJambProfile,
-    buyEducationPin
+    buyEducationPin,
+    getWalletBalance
 };

@@ -20,12 +20,6 @@ const NETWORK_CODES = {
 };
 
 /**
- * Utility: Calculate your 12% marked-up price for the cards
- * @param {number} faceValue - The value on the card (100, 200, 500)
- * @param {number} quantity - Number of cards
- */
-
-/**
  * Purchase/Generate EPINs
  * @param {string} network - MTN, GLO, etc.
  * @param {number} value - Face value (100, 200, 500)
@@ -90,7 +84,34 @@ const queryTransaction = async (requestId) => {
     }
 };
 
+/**
+ * Get Nellobyte Wallet Balance
+ */
+const getWalletBalance = async () => {
+    try {
+        const response = await axios.get(`${BASE_URL}/APIWalletBalanceV1.asp`, {
+            params: {
+                UserID: USER_ID,
+                APIKey: API_KEY
+            }
+        });
+        const data = response.data;
+        if (typeof data === 'string' && data.toLowerCase().includes('balance')) {
+            const match = data.match(/[\d.]+/);
+            return {
+                balance: match ? parseFloat(match[0]) : 0,
+                currency: "NGN"
+            };
+        }
+        return { balance: 0, currency: "NGN" };
+    } catch (error) {
+        console.error("Nellobyte Balance Error:", error.message);
+        throw error;
+    }
+};
+
 module.exports = {
     buyEpin,
-    queryTransaction
+    queryTransaction,
+    getWalletBalance
 };
