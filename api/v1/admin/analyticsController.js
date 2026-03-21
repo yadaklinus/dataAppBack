@@ -9,7 +9,8 @@ const naija = require('@/services/naijaResultPinsProvider');
 /**
  * Helper: Get Start and End dates for a given period
  */
-const getPeriodDates = (period, targetDate = new Date()) => {
+const getPeriodDates = (period, targetDateInput) => {
+    const targetDate = targetDateInput ? new Date(targetDateInput) : new Date();
     const end = new Date(targetDate);
     const start = new Date(targetDate);
 
@@ -18,14 +19,28 @@ const getPeriodDates = (period, targetDate = new Date()) => {
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
             break;
+        case 'yesterday':
+            start.setDate(start.getDate() - 1);
+            start.setHours(0, 0, 0, 0);
+            end.setDate(end.getDate() - 1);
+            end.setHours(23, 59, 59, 999);
+            break;
+        case '3days':
+            start.setDate(start.getDate() - 3);
+            start.setHours(0, 0, 0, 0);
+            break;
+        case '7days':
         case 'week':
             start.setDate(start.getDate() - 7);
+            start.setHours(0, 0, 0, 0);
             break;
         case 'month':
             start.setMonth(start.getMonth() - 1);
+            start.setHours(0, 0, 0, 0);
             break;
         case 'year':
             start.setFullYear(start.getFullYear() - 1);
+            start.setHours(0, 0, 0, 0);
             break;
         default:
             start.setHours(0, 0, 0, 0);
@@ -39,9 +54,9 @@ const getPeriodDates = (period, targetDate = new Date()) => {
  */
 const getOverview = async (req, res) => {
     try {
-        const { period = 'month' } = req.query;
-        const { start: periodStart, end: periodEnd } = getPeriodDates(period);
-        const { start: todayStart, end: todayEnd } = getPeriodDates('day');
+        const { period = 'month', date } = req.query;
+        const { start: periodStart, end: periodEnd } = getPeriodDates(period, date);
+        const { start: todayStart, end: todayEnd } = getPeriodDates('day', date);
 
         const [
             totalUsers,
@@ -56,7 +71,7 @@ const getOverview = async (req, res) => {
         ] = await Promise.all([
             prisma.user.count(),
             prisma.user.count({ where: { createdAt: { gte: todayStart, lte: todayEnd } } }),
-            prisma.user.count({ where: { createdAt: { gte: periodStart } } }),
+            prisma.user.count({ where: { createdAt: { gte: periodStart, lte: periodEnd } } }),
             prisma.transaction.count(),
             prisma.transaction.groupBy({
                 by: ['status'],
@@ -68,7 +83,7 @@ const getOverview = async (req, res) => {
                 where: { 
                     type: 'WALLET_FUNDING', 
                     status: 'SUCCESS',
-                    createdAt: { gte: periodStart }
+                    createdAt: { gte: periodStart, lte: periodEnd }
                 },
                 _sum: { amount: true }
             }),
@@ -76,7 +91,7 @@ const getOverview = async (req, res) => {
                 where: {
                     status: 'SUCCESS',
                     type: { not: 'WALLET_FUNDING' },
-                    createdAt: { gte: periodStart }
+                    createdAt: { gte: periodStart, lte: periodEnd }
                 },
                 _sum: { amount: true }
             }),
@@ -103,7 +118,11 @@ const getOverview = async (req, res) => {
             };
         }
 
-        const txStatusBreakdown = {};
+        const txStatusBreakdown = {
+            SUCCESS: 0,
+            PENDING: 0,
+            FAILED: 0
+        };
         transactionStats.forEach(stat => {
             txStatusBreakdown[stat.status] = stat._count._all;
         });
@@ -133,15 +152,14 @@ const getOverview = async (req, res) => {
 
 /**
  * GET /api/v1/admin/analytics/revenue
- * Time-series data for charts
  */
 const getRevenueChart = async (req, res) => {
     try {
         const { period = 'week' } = req.query;
         let days = 7;
         if (period === 'month') days = 30;
+        if (period === '3days') days = 3;
 
-        // Use queryRaw for date truncation grouping
         const stats = await prisma.$queryRaw`
             SELECT 
                 DATE_TRUNC('day', "createdAt") as date,
@@ -164,7 +182,6 @@ const getRevenueChart = async (req, res) => {
             data: { labels, revenue, transactionCount }
         });
     } catch (error) {
-        console.error("Revenue Chart Error:", error);
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
@@ -210,8 +227,8 @@ const getTransactions = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const where = {};
-        if (status) where.status = status;
-        if (type) where.type = type;
+        if (status && status !== 'all') where.status = status;
+        if (type && type !== 'all') where.type = type;
         if (search) {
             where.OR = [
                 { reference: { contains: search } },
@@ -249,9 +266,12 @@ const getTransactions = async (req, res) => {
  */
 const getUsers = async (req, res) => {
     try {
-        const [total, kycVerified, tierBreakdown, growth] = await Promise.all([
+        const { start: todayStart, end: todayEnd } = getPeriodDates('day');
+
+        const [total, kycVerified, newToday, tierBreakdown, growth] = await Promise.all([
             prisma.user.count(),
             prisma.user.count({ where: { isKycVerified: true } }),
+            prisma.user.count({ where: { createdAt: { gte: todayStart, lte: todayEnd } } }),
             prisma.user.groupBy({
                 by: ['tier'],
                 _count: { _all: true }
@@ -267,16 +287,19 @@ const getUsers = async (req, res) => {
             `
         ]);
 
-        const tiers = {};
-        tierBreakdown.forEach(t => tiers[t.tier] = t._count._all);
+        const tierDistribution = tierBreakdown.map(t => ({
+            name: t.tier || 'Unknown',
+            value: t._count._all
+        }));
 
         return res.status(200).json({
             status: "OK",
             data: {
                 total,
+                newToday,
                 kycVerified,
                 kycPending: total - kycVerified,
-                tiers,
+                tierDistribution,
                 timeSeries: growth.map(g => ({
                     label: g.date.toISOString().split('T')[0],
                     count: g.count
@@ -284,7 +307,6 @@ const getUsers = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error("User Analytics Error:", error);
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
@@ -310,9 +332,7 @@ const getProviderWallets = async (req, res) => {
             naijaResultPins: naijaBal.status === 'fulfilled' ? naijaBal.value : { balance: 0, error: naijaBal.reason?.message }
         };
 
-        // Cache for 5 minutes
         await setCache(cacheKey, balances, 300);
-        // Also set a quick cache for overview
         await setCache('admin_provider_wallets_quick', balances, 600);
 
         return res.status(200).json({ status: "OK", data: balances });
@@ -326,11 +346,19 @@ const getProviderWallets = async (req, res) => {
  */
 const getFundingAnalytics = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const start = startDate ? new Date(startDate) : new Date(new Date().setDate(new Date().getDate() - 30));
-        const end = endDate ? new Date(endDate) : new Date();
+        const { startDate, endDate, period } = req.query;
+        let start, end;
+        
+        if (period) {
+            const range = getPeriodDates(period);
+            start = range.start;
+            end = range.end;
+        } else {
+            start = startDate ? new Date(startDate) : new Date(new Date().setDate(new Date().getDate() - 30));
+            end = endDate ? new Date(endDate) : new Date();
+        }
 
-        const [totals, gatewayStats] = await Promise.all([
+        const [totals, gatewayStats, growth, statusStats] = await Promise.all([
             prisma.transaction.aggregate({
                 where: { type: 'WALLET_FUNDING', status: 'SUCCESS', createdAt: { gte: start, lte: end } },
                 _sum: { amount: true },
@@ -342,11 +370,24 @@ const getFundingAnalytics = async (req, res) => {
                     SUM(amount)::FLOAT as amount,
                     COUNT(*)::INT as count
                 FROM "Transaction"
-                WHERE type = 'WALLET_FUNDING' 
-                  AND status = 'SUCCESS'
-                  AND "createdAt" BETWEEN ${start} AND ${end}
+                WHERE type = 'WALLET_FUNDING' AND status = 'SUCCESS' AND "createdAt" BETWEEN ${start} AND ${end}
                 GROUP BY 1
-            `
+            `,
+            prisma.$queryRaw`
+                SELECT 
+                    DATE_TRUNC('day', "createdAt") as name,
+                    SUM(amount)::FLOAT as amount,
+                    COUNT(*)::INT as count
+                FROM "Transaction"
+                WHERE type = 'WALLET_FUNDING' AND status = 'SUCCESS' AND "createdAt" BETWEEN ${start} AND ${end}
+                GROUP BY 1
+                ORDER BY 1 ASC
+            `,
+            prisma.transaction.groupBy({
+                by: ['status'],
+                where: { type: 'WALLET_FUNDING', createdAt: { gte: start, lte: end } },
+                _count: { _all: true }
+            })
         ]);
 
         const gateways = {};
@@ -355,64 +396,16 @@ const getFundingAnalytics = async (req, res) => {
             gateways[name] = { amount: g.amount, count: g.count };
         });
 
+        const statusBreakdown = { SUCCESS: 0, PENDING: 0, FAILED: 0 };
+        statusStats.forEach(s => statusBreakdown[s.status] = s._count._all);
+
         return res.status(200).json({
             status: "OK",
             data: {
                 totalAmount: totals._sum.amount || 0,
                 totalCount: totals._count._all,
-                gateways
-            }
-        });
-    } catch (error) {
-        return res.status(500).json({ status: "ERROR", message: error.message });
-    }
-};
-
-/**
- * GET /api/v1/admin/analytics/data
- */
-const getDataAnalytics = async (req, res) => {
-    try {
-        const { period = 'month' } = req.query;
-        const { start } = getPeriodDates(period);
-
-        const [totals, providerStats, growth] = await Promise.all([
-            prisma.transaction.aggregate({
-                where: { type: 'DATA', status: 'SUCCESS', createdAt: { gte: start } },
-                _sum: { amount: true },
-                _count: { _all: true }
-            }),
-            prisma.$queryRaw`
-                SELECT 
-                    COALESCE(metadata->>'network', metadata->>'provider', 'Unknown') as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'DATA' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-            `,
-            prisma.$queryRaw`
-                SELECT 
-                    DATE_TRUNC('day', "createdAt") as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'DATA' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-                ORDER BY 1 ASC
-            `
-        ]);
-
-        const byProvider = {};
-        providerStats.forEach(p => {
-            byProvider[p.name] = { ...p };
-        });
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
-                byProvider,
+                statusBreakdown,
+                gateways,
                 timeSeries: growth.map(g => ({
                     ...g,
                     name: g.name.toISOString().split('T')[0]
@@ -425,162 +418,107 @@ const getDataAnalytics = async (req, res) => {
 };
 
 /**
- * GET /api/v1/admin/analytics/airtime
+ * Generic Service Analytics Wrapper
  */
+const getServiceAnalytics = async (type, period) => {
+    const { start, end } = getPeriodDates(period);
+
+    const [totals, statusStats, providerStats, growth] = await Promise.all([
+        prisma.transaction.aggregate({
+            where: { type, createdAt: { gte: start, lte: end } },
+            _sum: { amount: true },
+            _count: { _all: true }
+        }),
+        prisma.transaction.groupBy({
+            by: ['status'],
+            where: { type, createdAt: { gte: start, lte: end } },
+            _count: { _all: true }
+        }),
+        prisma.$queryRaw`
+            SELECT 
+                COALESCE(metadata->>'network', metadata->>'provider', metadata->>'disco', metadata->>'cable_tv', 'Unknown') as name,
+                SUM(amount)::FLOAT as revenue,
+                COUNT(*)::INT as count
+            FROM "Transaction"
+            WHERE type = ${type} AND status = 'SUCCESS' AND "createdAt" BETWEEN ${start} AND ${end}
+            GROUP BY 1
+        `,
+        prisma.$queryRaw`
+            SELECT 
+                DATE_TRUNC('day', "createdAt") as name,
+                SUM(amount)::FLOAT as revenue,
+                COUNT(*)::INT as count
+            FROM "Transaction"
+            WHERE type = ${type} AND status = 'SUCCESS' AND "createdAt" BETWEEN ${start} AND ${end}
+            GROUP BY 1
+            ORDER BY 1 ASC
+        `
+    ]);
+
+    const statusBreakdown = { SUCCESS: 0, PENDING: 0, FAILED: 0 };
+    statusStats.forEach(s => statusBreakdown[s.status] = s._count._all);
+
+    const byProvider = {};
+    (providerStats || []).forEach(p => byProvider[p.name] = { ...p });
+
+    const totalCount = statusBreakdown.SUCCESS + statusBreakdown.PENDING + statusBreakdown.FAILED;
+    const successRate = totalCount > 0 ? (statusBreakdown.SUCCESS / totalCount) * 100 : 0;
+
+    return {
+        total: { 
+            count: statusBreakdown.SUCCESS, 
+            revenue: totals._sum.amount || 0,
+            successRate: successRate.toFixed(1) + '%',
+            ...statusBreakdown
+        },
+        byProvider,
+        timeSeries: (growth || []).map(g => ({
+            ...g,
+            name: g.name.toISOString().split('T')[0]
+        }))
+    };
+};
+
+const getDataAnalytics = async (req, res) => {
+    try {
+        const data = await getServiceAnalytics('DATA', req.query.period || 'month');
+        return res.status(200).json({ status: "OK", data });
+    } catch (error) {
+        return res.status(500).json({ status: "ERROR", message: error.message });
+    }
+};
+
 const getAirtimeAnalytics = async (req, res) => {
     try {
-        const { period = 'month' } = req.query;
-        const { start } = getPeriodDates(period);
-
-        const [totals, providerStats] = await Promise.all([
-            prisma.transaction.aggregate({
-                where: { type: 'AIRTIME', status: 'SUCCESS', createdAt: { gte: start } },
-                _sum: { amount: true },
-                _count: { _all: true }
-            }),
-            prisma.$queryRaw`
-                SELECT 
-                    COALESCE(metadata->>'network', metadata->>'provider', 'Unknown') as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'AIRTIME' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-            `
-        ]);
-
-        const byProvider = {};
-        providerStats.forEach(p => {
-            byProvider[p.name] = { ...p };
-        });
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
-                byProvider
-            }
-        });
+        const data = await getServiceAnalytics('AIRTIME', req.query.period || 'month');
+        return res.status(200).json({ status: "OK", data });
     } catch (error) {
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
 
-/**
- * GET /api/v1/admin/analytics/education
- */
 const getEducationAnalytics = async (req, res) => {
     try {
-        const { period = 'month' } = req.query;
-        const { start } = getPeriodDates(period);
-
-        const [totals, providerStats] = await Promise.all([
-            prisma.transaction.aggregate({
-                where: { type: 'EDUCATION', status: 'SUCCESS', createdAt: { gte: start } },
-                _sum: { amount: true },
-                _count: { _all: true }
-            }),
-            prisma.$queryRaw`
-                SELECT 
-                    COALESCE(metadata->>'provider', metadata->>'exam_type', 'Unknown') as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'EDUCATION' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-            `
-        ]);
-
-        const byProvider = {};
-        providerStats.forEach(p => byProvider[p.name] = { ...p });
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
-                byProvider
-            }
-        });
+        const data = await getServiceAnalytics('EDUCATION', req.query.period || 'month');
+        return res.status(200).json({ status: "OK", data });
     } catch (error) {
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
 
-/**
- * GET /api/v1/admin/analytics/electricity
- */
 const getElectricityAnalytics = async (req, res) => {
     try {
-        const { period = 'month' } = req.query;
-        const { start } = getPeriodDates(period);
-
-        const [totals, discoStats] = await Promise.all([
-            prisma.transaction.aggregate({
-                where: { type: 'ELECTRICITY', status: 'SUCCESS', createdAt: { gte: start } },
-                _sum: { amount: true },
-                _count: { _all: true }
-            }),
-            prisma.$queryRaw`
-                SELECT 
-                    COALESCE(metadata->>'disco', metadata->>'discoCode', 'Unknown') as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'ELECTRICITY' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-            `
-        ]);
-
-        const byProvider = {};
-        discoStats.forEach(p => byProvider[p.name] = { ...p });
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
-                byProvider
-            }
-        });
+        const data = await getServiceAnalytics('ELECTRICITY', req.query.period || 'month');
+        return res.status(200).json({ status: "OK", data });
     } catch (error) {
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
 
-/**
- * GET /api/v1/admin/analytics/cable
- */
 const getCableAnalytics = async (req, res) => {
     try {
-        const { period = 'month' } = req.query;
-        const { start } = getPeriodDates(period);
-
-        const [totals, cableStats] = await Promise.all([
-            prisma.transaction.aggregate({
-                where: { type: 'CABLE_TV', status: 'SUCCESS', createdAt: { gte: start } },
-                _sum: { amount: true },
-                _count: { _all: true }
-            }),
-            prisma.$queryRaw`
-                SELECT 
-                    COALESCE(metadata->>'cable_tv', metadata->>'cableTV', 'Unknown') as name,
-                    SUM(amount)::FLOAT as revenue,
-                    COUNT(*)::INT as count
-                FROM "Transaction"
-                WHERE type = 'CABLE_TV' AND status = 'SUCCESS' AND "createdAt" >= ${start}
-                GROUP BY 1
-            `
-        ]);
-
-        const byProvider = {};
-        cableStats.forEach(p => byProvider[p.name] = { ...p });
-
-        return res.status(200).json({
-            status: "OK",
-            data: {
-                total: { count: totals._count._all, revenue: totals._sum.amount || 0 },
-                byProvider
-            }
-        });
+        const data = await getServiceAnalytics('CABLE_TV', req.query.period || 'month');
+        return res.status(200).json({ status: "OK", data });
     } catch (error) {
         return res.status(500).json({ status: "ERROR", message: error.message });
     }

@@ -152,6 +152,10 @@ const getDashboard = async (req, res) => {
             timeout: 15000
         });
 
+        if (!userWithWallet) {
+            return res.status(404).json({ status: "ERROR", message: "User not found" });
+        }
+
         return res.status(200).json({
             status: "OK",
             data: {

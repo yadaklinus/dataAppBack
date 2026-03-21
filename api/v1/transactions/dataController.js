@@ -17,33 +17,70 @@ const { getCache, setCache } = require('@/lib/redis');
 
 /**
  * Fetch available plans (Selling Price only)
- * If provider=VTPASS is passed in query, fetch from VTPass
+ * Now fetching from the database (NetworkPlan & DataPlan)
  */
 const getAvailablePlans = async (req, res) => {
     try {
-        const cacheKey = 'data_plans_all';
-        const cachedPlans = await getCache(cacheKey);
+        // const cacheKey = 'data_plans_db_mapped';
+        // const cachedPlans = await getCache(cacheKey);
 
-        if (cachedPlans) {
-            console.log('[Cache] Hit for data_plans_all');
-            return res.status(200).json(cachedPlans);
-        }
+        // if (cachedPlans) {
+        //     return res.status(200).json(cachedPlans);
+        // }
 
-        console.log('[Cache] Miss for data_plans_all');
-        const plans = await vtpassProvider.fetchAllDataPlansMapped();
+        // Fetch from DB
+        const networks = await prisma.networkPlan.findMany({
+            where: { isActive: true },
+            include: {
+                plans: {
+                    where: { isActive: true },
+                    orderBy: [
+                        { sortOrder: 'asc' },
+                        { costPrice: 'asc' }
+                    ]
+                }
+            }
+        });
 
-        // Cache for 24 hours
-        await setCache(cacheKey, plans, 86400);
+        // Map to the format expected by the frontend (VTPass structure)
+        const mappedData = {};
+        networks.forEach(network => {
+            mappedData[network.name] = [{
+                ID: network.externalId,
+                PRODUCT: network.plans.map(plan => ({
+                    PRODUCT_SNO: plan.productId,
+                    PRODUCT_CODE: plan.productCode,
+                    PRODUCT_ID: plan.productId, // This maps to variation_code in VTPass
+                    PRODUCT_NAME: plan.displayName,
+                    VALIDITY: plan.validity,
+                    PLAN_TYPE: plan.planType,
+                    PRODUCT_AMOUNT: plan.userPrice.toString(),
+                    SELLING_PRICE: Number(plan.userPrice),
+                    IS_BEST_VALUE: plan.isBestValue
+                }))
+            }];
+        });
 
-        return res.status(200).json(plans);
+        const responseBody = {
+            status: "OK",
+            data: {
+                MOBILE_NETWORK: mappedData
+            }
+        };
+
+        // Cache for 1 hour (less than 24h since admin might change prices)
+        //await setCache(cacheKey, responseBody, 3600);
+
+        return res.status(200).json(responseBody);
     } catch (error) {
+        console.error("Get Available Plans Error:", error);
         return res.status(500).json({ status: "ERROR", message: error.message });
     }
 };
 
 /**
  * Handle Data Bundle Purchase
- * Added: Phone number prefix validation to prevent cross-network errors.
+ * Now validates against the database DataPlan record.
  */
 const purchaseData = async (req, res) => {
 
@@ -51,7 +88,6 @@ const purchaseData = async (req, res) => {
     if (!parsed.success) {
         return res.status(400).json({ status: "ERROR", message: parsed.error.errors[0].message });
     }
-
 
     const { network, planId, phoneNumber, transactionPin } = parsed.data;
 
@@ -62,35 +98,21 @@ const purchaseData = async (req, res) => {
         return res.status(400).json({ status: "ERROR", message: "Network, Plan ID, and Phone Number are required" });
     }
 
-    // --- BUILDER ADDITION: PREFIX VALIDATION ---
-    const isNetworkMatch = validateNetworkMatch(network, phoneNumber);
-    // if (!isNetworkMatch) {
-    //     return res.status(400).json({
-    //         status: "ERROR",
-    //         message: `The number ${phoneNumber} does not appear to be a valid ${network} line.`
-    //     });
-    // }
-
     const cleanPhone = normalizePhoneNumber(phoneNumber);
 
     try {
-        let selectedPlan = null;
-        let sellingPrice = 0;
-        let planName = '';
+        // Fetch plan from DB instead of provider/cache
+        const plan = await prisma.dataPlan.findUnique({
+            where: { productId: planId },
+            include: { network: true }
+        });
 
-        const cacheKey = `data_plans_${network.toLowerCase()}`;
-        let allPlans = await getCache(cacheKey);
-        if (!allPlans) {
-            allPlans = await vtpassProvider.fetchDataPlans(network);
-            await setCache(cacheKey, allPlans, 3600); // 1 hour TTL
+        if (!plan || !plan.isActive) {
+            return res.status(404).json({ status: "ERROR", message: "Invalid or inactive data plan selected" });
         }
 
-        selectedPlan = allPlans.find(p => String(p.variation_code) === String(planId));
-        if (!selectedPlan) {
-            return res.status(404).json({ status: "ERROR", message: "Invalid data plan selected" });
-        }
-        sellingPrice = selectedPlan.SELLING_PRICE;
-        planName = selectedPlan.name;
+        const sellingPrice = Number(plan.userPrice);
+        const planName = plan.rawName;
 
         // --- IDEMPOTENCY CHECK ---
         const idempotencyKey = req.headers['x-idempotency-key'];

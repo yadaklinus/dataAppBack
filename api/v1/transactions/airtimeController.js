@@ -6,6 +6,7 @@ const { z } = require('zod');
 const { generateRef, generateVTPassRef } = require('@/lib/crypto');
 const { isNetworkError, safeRefund } = require('@/lib/financialSafety');
 const bcrypt = require('bcryptjs');
+const { getCache, setCache } = require('@/lib/redis');
 
 /**
  * Handles Airtime Purchase Logic

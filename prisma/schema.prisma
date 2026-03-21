@@ -158,7 +158,7 @@ model Transaction {
   reference         String  @unique
   providerReference String? @unique
 
-  idempotencyKey    String? @unique
+  idempotencyKey String? @unique
   providerStatus String?
 
   metadata Json?
@@ -361,4 +361,51 @@ model SavedFlightTemplate {
   updatedAt DateTime @updatedAt
 
   @@index([origin, destination])
+}
+
+// --- DATA PLANS SYSTEM ---
+
+model NetworkPlan {
+  id         String     @id @default(cuid())
+  name       String     @unique // e.g., "MTN"
+  externalId String     @unique // The "ID" from your JSON (e.g., "01" for MTN)
+  logoUrl    String? // Path to network logo image
+  plans      DataPlan[]
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([externalId])
+}
+
+// This is the Data Plan model mapped to your provider's JSON
+model DataPlan {
+  id        String      @id @default(cuid())
+  networkId String
+  network   NetworkPlan @relation(fields: [networkId], references: [id])
+
+  // --- Mapping to Provider JSON ---
+  productId   String @unique // From "PRODUCT_ID" (e.g., "mtn-10mb-100")
+  productCode String // From "PRODUCT_CODE"
+  rawName     String // The messy name from provider: "110MB Daily Plan (1 Day) - N100"
+
+  // --- Your App's Customization ---
+  displayName String // Clean name for users: "110MB Daily"
+  planType    String // SME, Gifting, Binge, Corporate, etc.
+  validity    String // e.g., "1 Day", "30 Days"
+
+  // --- Pricing Logic ---
+  costPrice     Decimal @db.Decimal(15, 2) // The "PRODUCT_AMOUNT" from JSON (What you pay)
+  userPrice     Decimal @db.Decimal(15, 2) // Your custom price for normal users
+
+  // --- Controls ---
+  isActive    Boolean @default(true)
+  isBestValue Boolean @default(false) // To highlight specific plans in UI
+  sortOrder   Int     @default(0)     // Manual ordering
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([networkId])
+  @@index([productId])
 }
