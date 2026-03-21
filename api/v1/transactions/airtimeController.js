@@ -107,9 +107,8 @@ const purchaseAirtime = async (req, res) => {
         if (!user.transactionPin) throw new Error("Please set up a transaction PIN before making purchases");
 
         // PERFORMANCE: Bypass Bcrypt for load tests
-        const isLoadTest = req.headers['x-load-test-key'] === process.env.LOAD_TEST_KEY;
         const pinCacheKey = `verified_pin_${userId}_${transactionPin}`;
-        let isPinValid = isLoadTest ? true : await getCache(pinCacheKey);
+        let isPinValid = await getCache(pinCacheKey);
 
         if (!isPinValid) {
             isPinValid = await bcrypt.compare(transactionPin, user.transactionPin);
