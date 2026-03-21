@@ -1,4 +1,0 @@
--- AlterTable
-ALTER TABLE "FlightBookingRequest" ADD COLUMN     "adults" INTEGER NOT NULL DEFAULT 1,
-ADD COLUMN     "children" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN     "infants" INTEGER NOT NULL DEFAULT 0;
